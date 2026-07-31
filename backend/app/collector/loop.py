@@ -3,6 +3,7 @@ import logging
 import signal
 import time
 
+from app.alerts.alerter import Alerter
 from app.client.client import WarbleClient
 from app.client.exceptions import WarbleAPIError, WarbleRateLimitError
 from app.collector import sampler
@@ -10,6 +11,7 @@ from app.collector.budget import BudgetTracker
 from app.config import settings
 from app.db import dao
 from app.db.base import engine, get_session
+from app.detector.evaluate import evaluate_posts
 
 logger = logging.getLogger("collector.loop")
 
@@ -85,7 +87,9 @@ async def _discovery_tick(client: WarbleClient, budget: BudgetTracker, state: Co
     logger.info("discovery sweep: %d creators, %d posts seen", stats.creators_seen, stats.posts_seen)
 
 
-async def _live_sample_tick(client: WarbleClient, budget: BudgetTracker, state: CollectorState) -> None:
+async def _live_sample_tick(
+    client: WarbleClient, budget: BudgetTracker, state: CollectorState, alerter: Alerter
+) -> None:
     if state.is_paused():
         return
     if not budget.can_spend(1):
@@ -111,6 +115,24 @@ async def _live_sample_tick(client: WarbleClient, budget: BudgetTracker, state: 
         stats.sampled, stats.gone, stats.deferred_chunks,
     )
 
+    async with get_session() as session:
+        evaluations = await evaluate_posts(session, post_ids)
+        breakouts = {pid: ev for pid, ev in evaluations.items() if ev.state == "BREAKOUT"}
+        if not breakouts:
+            return
+        try:
+            alert_stats = await alerter.fire_alerts(session, breakouts, state.current_sim_hours)
+        except WarbleRateLimitError as exc:
+            await _handle_rate_limit(state, exc)
+            return
+        except WarbleAPIError as exc:
+            logger.error("alert firing failed: %s", exc)
+            return
+    logger.info(
+        "alerts: %d fired, %d deduped, %d queued, %d failed",
+        alert_stats.fired, alert_stats.deduped, alert_stats.queued, alert_stats.failed,
+    )
+
 
 async def run_heartbeat_loop(client: WarbleClient, budget: BudgetTracker, state: CollectorState) -> None:
     while not state.shutdown.is_set():
@@ -126,9 +148,11 @@ async def run_discovery_loop(client: WarbleClient, budget: BudgetTracker, state:
             break
 
 
-async def run_live_sample_loop(client: WarbleClient, budget: BudgetTracker, state: CollectorState) -> None:
+async def run_live_sample_loop(
+    client: WarbleClient, budget: BudgetTracker, state: CollectorState, alerter: Alerter
+) -> None:
     while not state.shutdown.is_set():
-        await _live_sample_tick(client, budget, state)
+        await _live_sample_tick(client, budget, state, alerter)
         if await state.sleep_or_stop(LIVE_SAMPLE_INTERVAL_S):
             break
 
@@ -152,6 +176,7 @@ async def main() -> None:
     state = CollectorState()
     budget = BudgetTracker()
     client = WarbleClient(api_key=settings.warble_api_key, base_url=settings.warble_base_url)
+    alerter = Alerter(client, budget)
 
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -174,7 +199,7 @@ async def main() -> None:
         await asyncio.gather(
             run_heartbeat_loop(client, budget, state),
             run_discovery_loop(client, budget, state),
-            run_live_sample_loop(client, budget, state),
+            run_live_sample_loop(client, budget, state, alerter),
         )
 
     await engine.dispose()

@@ -80,3 +80,10 @@ class AlertCreateResponse(WarbleModel):
     id: str | None = None
     post_id: str
     note: str | None = None
+    # Best-effort/inferred, like Me before the live /me probe corrected it —
+    # no confirmed docs for this response shape yet. duplicate signals the
+    # server already had this post_id recorded (CLAUDE.md: idempotent per
+    # post, first timestamp is final).
+    duplicate: bool | None = None
+    sim_hours: float | None = None
+    received_at: str | None = None

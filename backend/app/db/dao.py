@@ -147,6 +147,7 @@ async def record_alert(
     submitted: bool = True,
     received_sim_hours: float | None = None,
     received_at: datetime.datetime | None = None,
+    api_reported_duplicate: bool = False,
 ) -> Alert:
     alert = await session.get(Alert, post_id)
     if alert is None:
@@ -157,7 +158,7 @@ async def record_alert(
             submitted=submitted,
             received_sim_hours=received_sim_hours,
             received_at=received_at,
-            is_duplicate=False,
+            is_duplicate=api_reported_duplicate,
         )
         session.add(alert)
     else:
