@@ -30,6 +30,10 @@ class Post(Base):
     platform: Mapped[str] = mapped_column(String)
     first_seen_sim_hours: Mapped[float] = mapped_column(Float)
     first_seen_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(
+        Enum("active", "gone", name="post_status"), default="active", server_default="active"
+    )
+    gone_sim_hours: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
 class Sample(Base):

@@ -117,6 +117,22 @@ async def upsert_post(
     return post
 
 
+async def mark_post_gone(session: AsyncSession, *, post_id: str, sim_hours: float) -> Post:
+    post = await session.get(Post, post_id)
+    if post is None:
+        raise ValueError(f"unknown post_id {post_id!r}")
+    if post.status != "gone":
+        post.status = "gone"
+        post.gone_sim_hours = sim_hours
+    await session.flush()
+    return post
+
+
+async def get_watchlist_post_ids(session: AsyncSession) -> list[str]:
+    result = await session.execute(select(Post.id).where(Post.status == "active"))
+    return list(result.scalars().all())
+
+
 # --- alerts: post_id is the PK, so "insert" and "idempotent per post" are the
 # same operation. First decision (decided_sim_hours/note/submitted) is final;
 # repeat calls only backfill received_* fields and flag is_duplicate. ---
