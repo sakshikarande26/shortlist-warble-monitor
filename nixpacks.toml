@@ -1,0 +1,11 @@
+[phases.setup]
+nixPkgs = ["python313"]
+
+[phases.install]
+cmds = [
+  "pip install uv",
+  "cd backend && uv sync --frozen"
+]
+
+[start]
+cmd = "cd backend && uv run python -m app.collector.loop"
