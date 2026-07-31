@@ -93,3 +93,8 @@ def downgrade() -> None:
     op.drop_table('request_log')
     op.drop_table('creators')
     # ### end Alembic commands ###
+    # op.drop_table('samples') does not drop the Postgres enum type that
+    # backed its 'source' column (confirmed against real Postgres: the type
+    # is left orphaned after the table is dropped). Drop it explicitly so
+    # downgrade is fully symmetric with upgrade. No-op on SQLite.
+    sa.Enum('cache', 'live', name='sample_source').drop(op.get_bind(), checkfirst=True)
