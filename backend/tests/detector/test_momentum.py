@@ -1,8 +1,43 @@
-from app.detector.momentum import SamplePoint, compute_interval_signals
+from app.detector.momentum import SamplePoint, _dedupe_samples, compute_interval_signals
 
 
 def pts(views: list[int]) -> list[SamplePoint]:
     return [SamplePoint(sim_hours=float(i), views=v) for i, v in enumerate(views)]
+
+
+def test_dedupe_collapses_identical_duplicate_timestamps():
+    samples = [
+        SamplePoint(sim_hours=0.548, views=16818),
+        SamplePoint(sim_hours=0.548, views=16818),
+    ]
+    assert _dedupe_samples(samples) == [SamplePoint(sim_hours=0.548, views=16818)]
+
+
+def test_dedupe_keeps_max_views_when_duplicates_disagree_and_are_out_of_order():
+    # Same sim_hours, two different view counts, arriving out of order (as
+    # they can when cache and live samples land in the same tick) — dedup
+    # must keep the max (freshest reading) regardless of input order.
+    samples = [
+        SamplePoint(sim_hours=2.966, views=16971),
+        SamplePoint(sim_hours=2.966, views=17136),
+    ]
+    assert _dedupe_samples(samples) == [SamplePoint(sim_hours=2.966, views=17136)]
+
+
+def test_dedupe_sorts_ascending_for_unsorted_unique_timestamps():
+    samples = [SamplePoint(sim_hours=1.0, views=200), SamplePoint(sim_hours=0.5, views=100)]
+    assert [s.sim_hours for s in _dedupe_samples(samples)] == [0.5, 1.0]
+
+
+def test_compute_interval_signals_never_emits_a_zero_delta_interval():
+    samples = [
+        SamplePoint(sim_hours=1.0, views=1000),
+        SamplePoint(sim_hours=1.0, views=1000),  # exact duplicate
+        SamplePoint(sim_hours=2.0, views=2000),
+    ]
+    signals = compute_interval_signals(samples, followers=10_000)
+    assert len(signals) == 1  # the duplicate collapsed, not a phantom 0-gain interval
+    assert signals[0].sim_hours == 2.0
 
 
 def test_no_intervals_with_fewer_than_two_samples():

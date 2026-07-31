@@ -24,12 +24,17 @@ class EvaluationResult:
 
 
 def evaluate_post(samples: list[SamplePoint], followers: int) -> EvaluationResult:
-    if len(samples) < 2:
+    # Checked on the deduped interval count, not the raw sample count:
+    # compute_interval_signals collapses duplicate-timestamp rows internally
+    # (cache + live landing at the same sim_hours), so e.g. 3 raw samples
+    # that are all the same timestamp still have to fall through to
+    # insufficient_data rather than reach history[-1] on an empty history.
+    signals = compute_interval_signals(samples, followers)
+    history = run_state_machine(signals)
+    if not history:
         last_sim_hours = samples[-1].sim_hours if samples else 0.0
         return EvaluationResult(state="NEW", score=0.0, reason="insufficient_data", sim_hours=last_sim_hours)
 
-    signals = compute_interval_signals(samples, followers)
-    history = run_state_machine(signals)
     latest = history[-1]
     return EvaluationResult(
         state=latest.state, score=latest.score, reason=latest.reason, sim_hours=latest.sim_hours

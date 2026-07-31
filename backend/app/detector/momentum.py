@@ -37,12 +37,34 @@ def _velocity(a: SamplePoint, b: SamplePoint) -> float:
     return (b.views - a.views) / delta_hours
 
 
-def compute_interval_signals(samples: list[SamplePoint], followers: int) -> list[IntervalSignal]:
-    """Compute one IntervalSignal per consecutive sample pair.
+def _dedupe_samples(samples: list[SamplePoint]) -> list[SamplePoint]:
+    """Collapse multiple rows at the same sim_hours (cache + live sampling,
+    or loop-timing collisions writing two rows in the same tick) down to one
+    point per timestamp, keeping the max views seen at that timestamp — the
+    freshest/highest reading. Without this, duplicate timestamps produce
+    phantom zero-hours intervals between them: zero (or even negative, if
+    the duplicate rows arrived out of order) gain, which scores 0 and breaks
+    the state machine's consecutive-confirmation streak even when the
+    underlying growth is a real, sustained breakout.
 
-    Requires samples sorted ascending by sim_hours (as dao.get_samples_for_post
-    already returns them). Fewer than 2 samples yields no intervals.
+    Input doesn't need to be pre-sorted or duplicate-free; output is sorted
+    ascending by sim_hours with strictly increasing timestamps.
     """
+    best_by_hour: dict[float, int] = {}
+    for sample in samples:
+        current_best = best_by_hour.get(sample.sim_hours)
+        if current_best is None or sample.views > current_best:
+            best_by_hour[sample.sim_hours] = sample.views
+    return [SamplePoint(sim_hours=hour, views=views) for hour, views in sorted(best_by_hour.items())]
+
+
+def compute_interval_signals(samples: list[SamplePoint], followers: int) -> list[IntervalSignal]:
+    """Compute one IntervalSignal per consecutive (deduplicated) sample pair.
+
+    Samples don't need to be pre-sorted or duplicate-free — see
+    _dedupe_samples. Fewer than 2 distinct timestamps yields no intervals.
+    """
+    samples = _dedupe_samples(samples)
     if len(samples) < 2:
         return []
 
@@ -64,6 +86,11 @@ def compute_interval_signals(samples: list[SamplePoint], followers: int) -> list
 
     for i in range(1, len(samples)):
         a, b = samples[i - 1], samples[i]
+        # Should be unreachable after _dedupe_samples (which guarantees
+        # strictly increasing timestamps), but never divide by zero — skip
+        # rather than emit a phantom interval either way.
+        if b.sim_hours - a.sim_hours <= 0:
+            continue
         absolute_gain = b.views - a.views
         relative_growth_pct = absolute_gain / max(a.views, 1) * 100
         velocity = _velocity(a, b)
