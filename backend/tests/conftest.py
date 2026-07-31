@@ -3,7 +3,12 @@ import tempfile
 
 _tmpdir = tempfile.mkdtemp()
 os.environ.setdefault("WARBLE_API_KEY", "test-key")
-os.environ.setdefault("DATABASE_URL", f"sqlite+aiosqlite:///{_tmpdir}/test.db")
+# Force, don't setdefault: .env (or a real shell/CI env var) may already set
+# DATABASE_URL to Supabase, and setdefault would leave that in place — tests
+# must never be able to touch a real database, no matter what's already in
+# the environment. This has to run before any app module (which reads
+# settings at import time) is imported.
+os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_tmpdir}/test.db"
 
 import pytest_asyncio  # noqa: E402
 
