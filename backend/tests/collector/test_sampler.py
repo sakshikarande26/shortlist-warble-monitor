@@ -1,6 +1,6 @@
 import pytest
 
-from app.client.models import Alert, Creator, CreatorPostsPage, Post, PostsBatchResult
+from app.client.models import Alert, Creator, CreatorPostsPage, Post, PostMetrics, PostsBatchResult
 from app.collector import sampler
 from app.collector.budget import BudgetTracker
 from app.db import dao
@@ -9,19 +9,56 @@ from app.db.models import Alert as AlertRow
 from tests.collector.fakes import FakeWarbleClient
 
 
-def make_post(id: str, **kwargs) -> Post:
-    defaults = dict(creator_id="wc_0000000001", views=10, likes=1, comments=0, metrics_at="t0")
-    defaults.update(kwargs)
-    return Post(id=id, **defaults)
+def make_post(
+    id: str,
+    *,
+    metrics_cached_at: str | None = None,
+    metrics_at: str | None = None,
+    views: int = 10,
+    likes: int = 1,
+    comments: int = 0,
+    **overrides,
+) -> Post:
+    defaults = dict(
+        creator_id="wc_0000000001",
+        creator_handle="handle",
+        creator_name="Name",
+        platform="clip",
+        published_at="2026-07-05T00:00:00.000Z",
+        caption="caption",
+    )
+    defaults.update(overrides)
+    return Post(
+        id=id,
+        metrics=PostMetrics(views=views, likes=likes, comments=comments),
+        metrics_cached_at=metrics_cached_at,
+        metrics_at=metrics_at,
+        **defaults,
+    )
+
+
+def make_creator(id: str = "wc_0000000001", **overrides) -> Creator:
+    defaults = dict(
+        handle="test", name="Test", category="lifestyle", bio="bio",
+        platform="clip", followers=5000,
+    )
+    defaults.update(overrides)
+    return Creator(id=id, **defaults)
 
 
 @pytest.mark.asyncio
 async def test_discover_follows_next_cursor_and_upserts_idempotently():
     client = FakeWarbleClient()
-    client.creators_response = [Creator(id="wc_0000000001", name="Test", handle="test")]
+    client.creators_response = [make_creator()]
     client.pages_by_creator["wc_0000000001"] = [
-        CreatorPostsPage(posts=[make_post("wp_0000000001")], next_cursor="page2"),
-        CreatorPostsPage(posts=[make_post("wp_0000000002")], next_cursor=None),
+        CreatorPostsPage(
+            data=[make_post("wp_0000000001", metrics_cached_at="2026-07-06T00:00:00.000Z")],
+            next_cursor="page2",
+        ),
+        CreatorPostsPage(
+            data=[make_post("wp_0000000002", metrics_cached_at="2026-07-06T00:00:00.000Z")],
+            next_cursor=None,
+        ),
     ]
     budget = BudgetTracker()
 
@@ -32,7 +69,10 @@ async def test_discover_follows_next_cursor_and_upserts_idempotently():
 
     async with get_session() as session:
         watchlist = await dao.get_watchlist_post_ids(session)
+        samples = await dao.get_samples_for_post(session, "wp_0000000001")
     assert set(watchlist) == {"wp_0000000001", "wp_0000000002"}
+    assert samples[0].metrics_at == "2026-07-06T00:00:00.000Z"
+    assert samples[0].source == "cache"
 
     request_calls = [c for c in client.calls if c.startswith("GET /creators")]
     assert len(request_calls) == 3  # /creators + 2 pages
@@ -59,7 +99,10 @@ async def test_sample_live_marks_missing_gone_and_inserts_samples_for_rest():
         await session.commit()
 
     client.batch_responses = [
-        PostsBatchResult(posts=[make_post("wp_0000000001")], missing_ids=["wp_0000000002"])
+        PostsBatchResult(
+            posts=[make_post("wp_0000000001", metrics_at="2026-07-06T01:00:00.000Z")],
+            missing_ids=["wp_0000000002"],
+        )
     ]
 
     stats = await sampler.sample_live(
@@ -75,6 +118,7 @@ async def test_sample_live_marks_missing_gone_and_inserts_samples_for_rest():
     assert watchlist == ["wp_0000000001"]
     assert len(samples) == 1
     assert samples[0].source == "live"
+    assert samples[0].metrics_at == "2026-07-06T01:00:00.000Z"
 
 
 @pytest.mark.asyncio
@@ -92,7 +136,12 @@ async def test_sync_alerts_preserves_first_decided_sim_hours():
         await session.commit()
 
     client = FakeWarbleClient()
-    client.alerts_response = [Alert(id="a1", post_id="wp_0000000001", note="server note")]
+    client.alerts_response = [
+        Alert(
+            post_id="wp_0000000001", note="server note",
+            received_sim_hours=3.0, received_at="2026-07-06T00:30:00.000Z",
+        )
+    ]
     budget = BudgetTracker()
 
     await sampler.sync_alerts(client, budget, sim_hours=99.0)

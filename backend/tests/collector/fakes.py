@@ -49,7 +49,7 @@ class FakeWarbleClient:
         pages = self.pages_by_creator.get(creator_id, [])
         idx = self._page_index.get(creator_id, 0)
         if idx >= len(pages):
-            return CreatorPostsPage(posts=[], next_cursor=None)
+            return CreatorPostsPage(data=[], next_cursor=None)
         page = pages[idx]
         self._page_index[creator_id] = idx + 1
         return page
@@ -69,7 +69,13 @@ class FakeWarbleClient:
         self.calls.append(f"POST /alerts {post_id}")
         self.post_alert_calls.append((post_id, note))
         if not self.post_alert_responses:
-            return AlertCreateResponse(post_id=post_id, note=note)
+            return AlertCreateResponse(
+                ok=True,
+                post_id=post_id,
+                received_sim_hours=0.0,
+                received_at="2026-07-06T00:00:00.000Z",
+                duplicate=False,
+            )
         response = self.post_alert_responses.pop(0)
         return self._record_and_maybe_raise(response)
 

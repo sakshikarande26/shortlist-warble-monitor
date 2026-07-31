@@ -1,3 +1,4 @@
+import datetime
 import logging
 from dataclasses import dataclass
 
@@ -13,6 +14,10 @@ from app.db.base import get_session
 logger = logging.getLogger("collector.sampler")
 
 LIVE_BATCH_SIZE = 10
+
+
+def _parse_iso(value: str) -> datetime.datetime:
+    return datetime.datetime.fromisoformat(value)
 
 
 @dataclass
@@ -88,10 +93,12 @@ async def discover(client: WarbleClient, budget: BudgetTracker, sim_hours: float
             await dao.upsert_creator(
                 session,
                 id=creator.id,
-                handle=creator.handle or creator.id,
-                name=creator.name or creator.id,
-                platform="unknown",
-                followers=0,
+                handle=creator.handle,
+                name=creator.name,
+                category=creator.category,
+                bio=creator.bio,
+                platform=creator.platform,
+                followers=creator.followers,
                 fetched_at_sim_hours=sim_hours,
             )
             stats.creators_seen += 1
@@ -118,21 +125,25 @@ async def discover(client: WarbleClient, budget: BudgetTracker, sim_hours: float
                     sim_hours=sim_hours, status_code=200,
                 )
 
-                for post in page.posts:
+                for post in page.data:
                     await dao.upsert_post(
                         session,
                         id=post.id,
-                        creator_id=post.creator_id or creator.id,
-                        platform="unknown",
+                        creator_id=post.creator_id,
+                        platform=post.platform,
                         first_seen_sim_hours=sim_hours,
+                        caption=post.caption,
+                        published_at=post.published_at,
                     )
                     await dao.insert_sample(
                         session,
                         post_id=post.id,
-                        views=post.views or 0,
-                        likes=post.likes or 0,
-                        comments=post.comments or 0,
-                        metrics_at=str(post.metrics_at) if post.metrics_at is not None else "",
+                        views=post.metrics.views,
+                        likes=post.metrics.likes,
+                        comments=post.metrics.comments,
+                        # Cache-sourced listing: use metrics_cached_at, never
+                        # the (absent, on this endpoint) live metrics_at.
+                        metrics_at=post.metrics_cached_at,
                         sim_hours=sim_hours,
                         source="cache",
                     )
@@ -181,10 +192,11 @@ async def sample_live(
                 await dao.insert_sample(
                     session,
                     post_id=post.id,
-                    views=post.views or 0,
-                    likes=post.likes or 0,
-                    comments=post.comments or 0,
-                    metrics_at=str(post.metrics_at) if post.metrics_at is not None else "",
+                    views=post.metrics.views,
+                    likes=post.metrics.likes,
+                    comments=post.metrics.comments,
+                    # Live batch endpoint: always metrics_at, never metrics_cached_at.
+                    metrics_at=post.metrics_at,
                     sim_hours=sim_hours,
                     source="live",
                 )
@@ -230,9 +242,14 @@ async def sync_alerts(client: WarbleClient, budget: BudgetTracker, sim_hours: fl
                 await dao.record_alert(
                     session,
                     post_id=alert.post_id,
-                    decided_sim_hours=sim_hours,
+                    # The server's own receipt time is the true original
+                    # decision time — more accurate than stamping "now" for
+                    # something we're only just learning about on reconcile.
+                    decided_sim_hours=alert.received_sim_hours,
                     note=alert.note,
                     submitted=True,
+                    received_sim_hours=alert.received_sim_hours,
+                    received_at=_parse_iso(alert.received_at),
                 )
                 await session.commit()
             except IntegrityError:

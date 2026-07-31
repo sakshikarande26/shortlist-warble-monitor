@@ -30,6 +30,7 @@ DEFAULT_BASE_URL = "https://warble.shortlistos.com/v1"
 MAX_BATCH_IDS = 10
 MAX_RETRIES = 3
 BACKOFF_BASE_SECONDS = 0.5
+MAX_NOTE_LENGTH = 500
 
 
 class WarbleClient:
@@ -164,7 +165,7 @@ class WarbleClient:
 
     async def get_creators(self) -> list[Creator]:
         response = await self._request("GET", "/creators")
-        return [Creator.model_validate(item) for item in response.json()]
+        return [Creator.model_validate(item) for item in response.json()["data"]]
 
     async def get_creator_posts(
         self, creator_id: str, cursor: str | None = None
@@ -186,22 +187,31 @@ class WarbleClient:
             raise ValueError(f"ids must contain at most {MAX_BATCH_IDS} items, got {len(ids)}")
 
         response = await self._request("GET", "/posts/batch", params={"ids": ",".join(ids)})
-        posts = [Post.model_validate(item) for item in response.json()]
+        posts = [Post.model_validate(item) for item in response.json()["data"]]
         returned_ids = {post.id for post in posts}
         missing_ids = [post_id for post_id in ids if post_id not in returned_ids]
         return PostsBatchResult(posts=posts, missing_ids=missing_ids)
 
     async def get_alerts(self) -> list[Alert]:
         response = await self._request("GET", "/alerts")
-        return [Alert.model_validate(item) for item in response.json()]
+        return [Alert.model_validate(item) for item in response.json()["data"]]
 
     async def post_alert(self, post_id: str, note: str | None = None) -> AlertCreateResponse:
         if not POST_ID_PATTERN.match(post_id):
             raise WarbleValidationError(
                 f"post_id {post_id!r} does not match ^wp_[0-9a-f]{{10}}$"
             )
+        if note is not None and len(note) > MAX_NOTE_LENGTH:
+            raise WarbleValidationError(
+                f"note exceeds {MAX_NOTE_LENGTH} characters ({len(note)})"
+            )
         payload: dict = {"post_id": post_id}
         if note is not None:
             payload["note"] = note
         response = await self._request("POST", "/alerts", json=payload)
-        return AlertCreateResponse.model_validate(response.json())
+        result = AlertCreateResponse.model_validate(response.json())
+        # 201 = first report, 200 = duplicate — the documented status code is
+        # the authoritative signal, so it wins over the body field if the two
+        # ever disagree.
+        result.duplicate = response.status_code == 200
+        return result

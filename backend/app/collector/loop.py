@@ -15,6 +15,21 @@ from app.detector.evaluate import evaluate_posts
 
 logger = logging.getLogger("collector.loop")
 
+# Fault isolation, top to bottom:
+#  - Each tick (heartbeat/discovery/live-sampling) runs inside its own
+#    try/except in the run_*_loop wrappers below, so a bug in one tick is
+#    logged and the loop moves on to the next scheduled run instead of
+#    taking the whole process down.
+#  - Within the live-sampling tick specifically: capture (sample_live) runs
+#    and commits FIRST, then detection (evaluate_posts) and alerting
+#    (fire_alerts) run in a second, separately-guarded step. Raw samples are
+#    irreplaceable — once a moment passes without being captured, it's gone
+#    for good. A detection or alerting bug, on the other hand, is fully
+#    recoverable: the samples are already safely on disk, so we can fix the
+#    bug and re-evaluate that same stored history later. So detection/
+#    alerting failures are never allowed to look like — or cause — a
+#    sampling failure.
+
 # Cadences. The loop's own scheduling clock is wall-clock time, because the
 # 250 req/rolling-hour budget it's pacing against is itself a wall-clock
 # window (CLAUDE.md) — see the plan/README for the full cadence rationale.
@@ -102,6 +117,9 @@ async def _live_sample_tick(
     if not post_ids:
         return
 
+    # Capture. This is the irreplaceable part — sample_live() commits its
+    # writes before returning, so by the time we get past this block, this
+    # tick's samples are durably on disk no matter what happens next.
     try:
         stats = await sampler.sample_live(client, budget, post_ids, state.current_sim_hours)
     except WarbleRateLimitError as exc:
@@ -115,19 +133,26 @@ async def _live_sample_tick(
         stats.sampled, stats.gone, stats.deferred_chunks,
     )
 
-    async with get_session() as session:
-        evaluations = await evaluate_posts(session, post_ids)
-        breakouts = {pid: ev for pid, ev in evaluations.items() if ev.state == "BREAKOUT"}
-        if not breakouts:
-            return
-        try:
+    # Detection + alerting. Best-effort from here on: a detector bug, a DB
+    # hiccup, or an alert-firing failure must never propagate out of this
+    # tick — the samples above are already safe, and a stored history can
+    # always be re-evaluated on a later tick once the bug is fixed.
+    try:
+        async with get_session() as session:
+            evaluations = await evaluate_posts(session, post_ids)
+            breakouts = {pid: ev for pid, ev in evaluations.items() if ev.state == "BREAKOUT"}
+            if not breakouts:
+                return
             alert_stats = await alerter.fire_alerts(session, breakouts, state.current_sim_hours)
-        except WarbleRateLimitError as exc:
-            await _handle_rate_limit(state, exc)
-            return
-        except WarbleAPIError as exc:
-            logger.error("alert firing failed: %s", exc)
-            return
+    except WarbleRateLimitError as exc:
+        await _handle_rate_limit(state, exc)
+        return
+    except Exception:
+        logger.exception(
+            "detection/alerting failed after live sampling succeeded — "
+            "samples are safe, will retry detection next cycle"
+        )
+        return
     logger.info(
         "alerts: %d fired, %d deduped, %d queued, %d failed",
         alert_stats.fired, alert_stats.deduped, alert_stats.queued, alert_stats.failed,
@@ -136,14 +161,23 @@ async def _live_sample_tick(
 
 async def run_heartbeat_loop(client: WarbleClient, budget: BudgetTracker, state: CollectorState) -> None:
     while not state.shutdown.is_set():
-        await _heartbeat_tick(client, budget, state)
+        try:
+            await _heartbeat_tick(client, budget, state)
+        except Exception:
+            # Fault isolation: an unexpected failure in one tick must not
+            # kill this loop (or, via asyncio.gather, the other two loops).
+            # Log it and pick back up on the next scheduled run.
+            logger.exception("heartbeat tick failed unexpectedly, will retry next cycle")
         if await state.sleep_or_stop(HEARTBEAT_INTERVAL_S):
             break
 
 
 async def run_discovery_loop(client: WarbleClient, budget: BudgetTracker, state: CollectorState) -> None:
     while not state.shutdown.is_set():
-        await _discovery_tick(client, budget, state)
+        try:
+            await _discovery_tick(client, budget, state)
+        except Exception:
+            logger.exception("discovery tick failed unexpectedly, will retry next cycle")
         if await state.sleep_or_stop(DISCOVERY_INTERVAL_S):
             break
 
@@ -152,7 +186,10 @@ async def run_live_sample_loop(
     client: WarbleClient, budget: BudgetTracker, state: CollectorState, alerter: Alerter
 ) -> None:
     while not state.shutdown.is_set():
-        await _live_sample_tick(client, budget, state, alerter)
+        try:
+            await _live_sample_tick(client, budget, state, alerter)
+        except Exception:
+            logger.exception("live-sampling tick failed unexpectedly, will retry next cycle")
         if await state.sleep_or_stop(LIVE_SAMPLE_INTERVAL_S):
             break
 

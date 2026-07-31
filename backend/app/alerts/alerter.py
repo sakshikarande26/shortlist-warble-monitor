@@ -172,7 +172,7 @@ class Alerter:
                 decided_sim_hours=item.decided_sim_hours,
                 note=item.note,
                 submitted=True,
-                received_sim_hours=response.sim_hours,
+                received_sim_hours=response.received_sim_hours,
                 received_at=_parse_received_at(response.received_at),
                 api_reported_duplicate=bool(response.duplicate),
             )
