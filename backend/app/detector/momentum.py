@@ -105,10 +105,17 @@ def compute_interval_signals(samples: list[SamplePoint], followers: int) -> list
         )
         score = max(score, 0.0)
 
-        if absolute_gain < config.MIN_VIEWS_FLOOR:
+        # Qualifies on EITHER path: a large absolute gain alone (big posts
+        # adding huge numbers at low %), or meaningful relative growth paired
+        # with a small-number floor (smaller posts growing fast) — never on
+        # relative growth alone, which is how a 5->50 spike stays rejected.
+        volume_ok = absolute_gain >= config.MIN_VIEWS_FLOOR or (
+            relative_growth_pct >= config.RELATIVE_GROWTH_THRESHOLD_PCT
+            and absolute_gain >= config.SMALL_ABSOLUTE_FLOOR
+        )
+
+        if not volume_ok:
             gate_reason = "below_volume_floor"
-        elif relative_growth_pct < config.RELATIVE_GROWTH_THRESHOLD_PCT:
-            gate_reason = "insufficient_relative_growth"
         elif score < config.WATCH_SCORE_THRESHOLD:
             gate_reason = "weak_normalized_momentum"
         else:

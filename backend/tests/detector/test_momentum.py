@@ -61,6 +61,37 @@ def test_below_volume_floor_blocks_tiny_absolute_gain_despite_huge_percentage():
     assert signals[0].gate_reason == "below_volume_floor"
 
 
+def test_large_absolute_gain_qualifies_despite_low_relative_growth():
+    # Bug 1: a big post gaining +40,728 views is only 3.7% growth once its
+    # base is ~1.09M -- below the 15% relative threshold -- but that's still
+    # a real, large breakout. Must qualify on the absolute path alone.
+    signals = compute_interval_signals(pts([1091002, 1131730]), followers=1_000_000)
+    assert signals[0].absolute_gain == 40728
+    assert signals[0].relative_growth_pct < 15.0
+    assert signals[0].qualifies is True
+    assert signals[0].gate_reason is None
+
+
+def test_relative_growth_path_qualifies_smaller_fast_growing_post():
+    # Below MIN_VIEWS_FLOOR on its own, but clears both the relative
+    # threshold and SMALL_ABSOLUTE_FLOOR -- the "smaller posts growing
+    # fast" path should qualify.
+    signals = compute_interval_signals(pts([1000, 1200]), followers=10_000)
+    assert signals[0].absolute_gain == 200  # < MIN_VIEWS_FLOOR (500)
+    assert signals[0].relative_growth_pct == 20.0  # >= RELATIVE_GROWTH_THRESHOLD_PCT
+    assert signals[0].qualifies is True
+
+
+def test_relative_growth_path_still_blocked_below_small_absolute_floor():
+    # Clears the 15% relative threshold but the absolute gain (80) is under
+    # SMALL_ABSOLUTE_FLOOR (100) -- must NOT qualify via the relative path.
+    signals = compute_interval_signals(pts([500, 580]), followers=10_000)
+    assert signals[0].relative_growth_pct == 16.0
+    assert signals[0].absolute_gain == 80
+    assert signals[0].qualifies is False
+    assert signals[0].gate_reason == "below_volume_floor"
+
+
 def test_follower_normalization_favors_small_creator():
     """Same raw trajectory, different follower counts: the small-follower
     creator's reach-velocity is far higher, so it should score higher."""
