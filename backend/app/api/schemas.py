@@ -2,12 +2,14 @@
 only — status labels and grouping live here, not in the detector.
 """
 
+from typing import Literal
+
 from pydantic import BaseModel
 
 from app.detector.states import PostState
 
 STATE_LABELS: dict[PostState, str] = {
-    "BREAKOUT": "Act now",
+    "BREAKOUT": "Taking off",
     "RISING": "Watch closely",
     "WATCH": "Rising",
     "COOLING": "Cooling",
@@ -26,31 +28,6 @@ class CreatorContext(BaseModel):
     platform: str
 
 
-class HomePost(BaseModel):
-    post_id: str
-    creator_handle: str
-    creator_followers: int
-    caption: str | None
-    views: int
-    likes: int
-    comments: int
-    state: PostState
-    score: float
-    status_label: str
-    needs_attention: bool
-    is_gone: bool
-
-
-class HomeResponse(BaseModel):
-    attention_queue: list[HomePost]
-    other_posts: list[HomePost]
-
-
-class TrajectoryPoint(BaseModel):
-    sim_hours: float
-    views: int
-
-
 class EvidenceDetail(BaseModel):
     sim_hours: float
     absolute_gain: int
@@ -58,6 +35,49 @@ class EvidenceDetail(BaseModel):
     velocity: float
     follower_velocity: float
     trajectory_ratio: float
+    # Comparative-to-creator pace (Home ranking only — None on post/creator
+    # detail, where it isn't computed). "creator" = compared against this
+    # creator's OTHER posts at a similar age; "self" = fell back to this
+    # post's own trajectory_ratio because the creator has too few other
+    # posts to build a baseline from. Never rendered as a standalone
+    # stat — the frontend folds it into one sentence, same as
+    # trajectory_ratio already is.
+    creator_pace_ratio: float | None = None
+    creator_pace_basis: Literal["creator", "self"] | None = None
+
+
+class HomePost(BaseModel):
+    post_id: str
+    creator_handle: str
+    creator_followers: int
+    caption: str | None
+    published_at: str | None
+    views: int
+    likes: int
+    comments: int
+    state: PostState
+    score: float
+    reason: str
+    status_label: str
+    evidence: EvidenceDetail | None  # grounds each card's performance line in this post's own numbers
+    is_gone: bool
+    latest_sim_hours: float | None
+    sparkline: list[int]  # last few deduped view counts, for a small trend line — not full history
+
+
+class HomeResponse(BaseModel):
+    # Both already ranked and capped server-side — the UI renders them as
+    # given, it doesn't re-derive groupings from state client-side.
+    act_now: list[HomePost]
+    watch_closely: list[HomePost]
+    total_posts: int  # distinguishes "nothing tracked yet" from "nothing moving right now"
+    unavailable_count: int
+    current_sim_hours: float | None
+
+
+class TrajectoryPoint(BaseModel):
+    sim_hours: float
+    views: int
 
 
 class PostDetail(BaseModel):
@@ -74,3 +94,52 @@ class PostDetail(BaseModel):
     status_label: str
     reason: str
     evidence: EvidenceDetail | None
+    current_sim_hours: float | None
+
+
+class CreatorRosterPost(BaseModel):
+    post_id: str
+    caption: str | None
+    state: PostState
+    status_label: str
+    score: float
+
+
+class CreatorRosterEntry(BaseModel):
+    id: str
+    handle: str
+    followers: int
+    active_post_count: int
+    needs_attention_count: int
+    strongest_post: CreatorRosterPost | None
+
+
+class CreatorsResponse(BaseModel):
+    creators: list[CreatorRosterEntry]
+
+
+class CreatorPostSummary(BaseModel):
+    post_id: str
+    caption: str | None
+    published_at: str | None
+    state: PostState
+    status_label: str
+    score: float
+    evidence: EvidenceDetail | None
+    is_gone: bool
+    latest_sim_hours: float | None
+    sparkline: list[int]
+
+
+class CreatorStats(BaseModel):
+    posts_tracked: int
+    posts_that_took_off: int  # ever reached BREAKOUT, not just currently in it
+    typical_views: int  # median latest views across active posts
+
+
+class CreatorDetailResponse(BaseModel):
+    creator: CreatorContext
+    active_posts: list[CreatorPostSummary]
+    unavailable_posts: list[CreatorPostSummary]
+    stats: CreatorStats
+    current_sim_hours: float | None

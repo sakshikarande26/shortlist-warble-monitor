@@ -22,7 +22,18 @@ if settings.database_url.startswith("postgresql"):
         "prepared_statement_cache_size": 0,
     }
 
-engine = create_async_engine(settings.database_url, connect_args=_connect_args)
+# pool_pre_ping: test each pooled connection with a lightweight ping before
+# handing it out, transparently replacing one Supabase's pgbouncer already
+# closed server-side (otherwise the first query on it fails with
+# asyncpg.exceptions.InterfaceError: connection is closed). pool_recycle
+# proactively retires connections before the pooler's own idle timeout is
+# likely to hit, on top of the reactive check.
+engine = create_async_engine(
+    settings.database_url,
+    connect_args=_connect_args,
+    pool_pre_ping=True,
+    pool_recycle=300,
+)
 
 async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
