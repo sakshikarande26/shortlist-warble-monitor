@@ -1,14 +1,8 @@
 import { Link } from "react-router-dom";
 import type { HomePost } from "../lib/types";
-import {
-  formatRelativeSimTime,
-  getInitials,
-  isStale,
-  performanceStatement,
-  statusLabel,
-} from "../lib/copy";
+import { formatRelativeSimTime, getInitials, isStale, performanceStatement } from "../lib/copy";
 import { Sparkline } from "./Sparkline";
-import { StatusPill } from "./ui/StatusPill";
+import { StatusPill, statusTextColorClass } from "./ui/StatusPill";
 
 interface PostCardProps {
   post: HomePost;
@@ -18,7 +12,6 @@ interface PostCardProps {
 // A list row, not a floating card — hairline dividers between rows (from
 // the parent's divide-y) carry the separation, not per-row borders/shadows.
 export function PostCard({ post, currentSimHours }: PostCardProps) {
-  const label = statusLabel(post.state, post.is_gone);
   const stale = isStale(post.latest_sim_hours, currentSimHours);
 
   return (
@@ -33,7 +26,7 @@ export function PostCard({ post, currentSimHours }: PostCardProps) {
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="truncate text-sm font-medium text-ink">@{post.creator_handle}</span>
-          <StatusPill label={label} />
+          <StatusPill label={post.status_label} />
         </div>
         {post.caption && <p className="mt-0.5 truncate text-sm text-ink-muted">{post.caption}</p>}
         <p className="mt-1 text-sm text-ink">{performanceStatement(post)}</p>
@@ -43,7 +36,7 @@ export function PostCard({ post, currentSimHours }: PostCardProps) {
         </p>
       </div>
 
-      <div className="hidden shrink-0 text-ink-muted transition-colors group-hover:text-ink sm:block">
+      <div className={`hidden shrink-0 transition-opacity opacity-70 group-hover:opacity-100 sm:block ${statusTextColorClass(post.status_label)}`}>
         <Sparkline values={post.sparkline} />
       </div>
     </Link>

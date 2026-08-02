@@ -1,5 +1,6 @@
 """Response models for the read-only dashboard API. Presentation-layer
-only — status labels and grouping live here, not in the detector.
+only — the canonical status vocabulary and comparative-ranking logic live
+in routes.py, not the detector.
 """
 
 from typing import Literal
@@ -7,16 +8,6 @@ from typing import Literal
 from pydantic import BaseModel
 
 from app.detector.states import PostState
-
-STATE_LABELS: dict[PostState, str] = {
-    "BREAKOUT": "Taking off",
-    "RISING": "Watch closely",
-    "WATCH": "Rising",
-    "COOLING": "Cooling",
-    "NEW": "Quiet",
-}
-
-NEEDS_ATTENTION_STATES: frozenset[PostState] = frozenset({"BREAKOUT", "RISING"})
 
 
 class CreatorContext(BaseModel):
@@ -35,13 +26,15 @@ class EvidenceDetail(BaseModel):
     velocity: float
     follower_velocity: float
     trajectory_ratio: float
-    # Comparative-to-creator pace (Home ranking only — None on post/creator
-    # detail, where it isn't computed). "creator" = compared against this
+    window_hours: float | None  # duration of the latest interval, for "+3,420 views in 2h"
+    consecutive_qualifying_checks: int  # how many checks in a row showed qualifying momentum
+    # Comparative-to-creator pace. "creator" = compared against this
     # creator's OTHER posts at a similar age; "self" = fell back to this
     # post's own trajectory_ratio because the creator has too few other
-    # posts to build a baseline from. Never rendered as a standalone
-    # stat — the frontend folds it into one sentence, same as
-    # trajectory_ratio already is.
+    # posts to build a baseline from. Both null when neither comparison can
+    # be trusted ("not enough history") — never a fabricated number. Never
+    # rendered as a standalone stat — the frontend folds it into one
+    # sentence, same as trajectory_ratio already is.
     creator_pace_ratio: float | None = None
     creator_pace_basis: Literal["creator", "self"] | None = None
 
@@ -58,7 +51,7 @@ class HomePost(BaseModel):
     state: PostState
     score: float
     reason: str
-    status_label: str
+    status_label: str  # canonical: "Taking off" / "Worth watching" / "Steady" / "Unavailable"
     evidence: EvidenceDetail | None  # grounds each card's performance line in this post's own numbers
     is_gone: bool
     latest_sim_hours: float | None
@@ -66,8 +59,9 @@ class HomePost(BaseModel):
 
 
 class HomeResponse(BaseModel):
-    # Both already ranked and capped server-side — the UI renders them as
-    # given, it doesn't re-derive groupings from state client-side.
+    # Both already ranked and capped server-side, and each filtered to
+    # exactly the status_label its section is named for — the UI renders
+    # them as given, it never re-derives groupings from state client-side.
     act_now: list[HomePost]
     watch_closely: list[HomePost]
     total_posts: int  # distinguishes "nothing tracked yet" from "nothing moving right now"
@@ -94,6 +88,7 @@ class PostDetail(BaseModel):
     status_label: str
     reason: str
     evidence: EvidenceDetail | None
+    alert_sent: bool  # whether an official alert was ever submitted for this post
     current_sim_hours: float | None
 
 
@@ -111,7 +106,7 @@ class CreatorRosterEntry(BaseModel):
     followers: int
     active_post_count: int
     needs_attention_count: int
-    strongest_post: CreatorRosterPost | None
+    strongest_post: CreatorRosterPost | None  # by current momentum, not lifetime views; null if none
 
 
 class CreatorsResponse(BaseModel):
@@ -143,3 +138,28 @@ class CreatorDetailResponse(BaseModel):
     unavailable_posts: list[CreatorPostSummary]
     stats: CreatorStats
     current_sim_hours: float | None
+
+
+class NotablePost(BaseModel):
+    post_id: str
+    creator_handle: str
+    caption: str | None
+    status_label: str
+    sim_hours: float
+
+
+class AlertSummary(BaseModel):
+    post_id: str
+    creator_handle: str
+    caption: str | None
+    sim_hours: float
+
+
+class SystemStatus(BaseModel):
+    """Backs the right-hand panel's idle state — real system context
+    instead of a placeholder, when no post is selected."""
+
+    posts_tracked: int
+    last_checked_sim_hours: float | None
+    most_notable_post: NotablePost | None  # most recently-updated Taking off / Worth watching post
+    most_recent_alert: AlertSummary | None

@@ -19,10 +19,13 @@ export interface EvidenceDetail {
   velocity: number;
   follower_velocity: number;
   trajectory_ratio: number;
-  // Comparative-to-creator pace — Home ranking only, null on post/creator
-  // detail. "creator" = compared against this creator's other posts at a
-  // similar age; "self" = fell back to trajectory_ratio (too few other
-  // posts to build a baseline from).
+  window_hours: number | null; // duration of the latest interval, for "+3,420 views in 2h"
+  consecutive_qualifying_checks: number;
+  // Comparative-to-creator pace. "creator" = compared against this
+  // creator's other posts at a similar age; "self" = fell back to this
+  // post's own trajectory_ratio (too few other posts to build a baseline
+  // from). Both null when neither comparison can be trusted — "not enough
+  // history," never a fabricated number.
   creator_pace_ratio: number | null;
   creator_pace_basis: "creator" | "self" | null;
 }
@@ -75,6 +78,7 @@ export interface PostDetail {
   status_label: string;
   reason: string;
   evidence: EvidenceDetail | null;
+  alert_sent: boolean;
   current_sim_hours: number | null;
 }
 
@@ -124,4 +128,26 @@ export interface CreatorDetailResponse {
   unavailable_posts: CreatorPostSummary[];
   stats: CreatorStats;
   current_sim_hours: number | null;
+}
+
+export interface NotablePost {
+  post_id: string;
+  creator_handle: string;
+  caption: string | null;
+  status_label: string;
+  sim_hours: number;
+}
+
+export interface AlertSummary {
+  post_id: string;
+  creator_handle: string;
+  caption: string | null;
+  sim_hours: number;
+}
+
+export interface SystemStatus {
+  posts_tracked: number;
+  last_checked_sim_hours: number | null;
+  most_notable_post: NotablePost | null;
+  most_recent_alert: AlertSummary | null;
 }

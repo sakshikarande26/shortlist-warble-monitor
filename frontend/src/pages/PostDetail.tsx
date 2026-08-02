@@ -38,9 +38,9 @@ export function PostDetail() {
   }, [load]);
 
   // Publishes the loaded post into the shared selection so the right-hand
-  // AI panel (rendered by the persistent app shell, not by this page) can
+  // panel (rendered by the persistent app shell, not by this page) can
   // show its interpretation and considerations. Clears on unmount, so
-  // navigating away drops back to the panel's placeholder.
+  // navigating away drops back to the panel's system-status view.
   useEffect(() => {
     if (state.status === "ready") {
       setActivePost(state.data);
@@ -84,6 +84,7 @@ function DetailContent({ detail }: { detail: PostDetailType }) {
           trajectory={detail.trajectory}
           isGone={detail.is_gone}
           goneSimHours={detail.gone_sim_hours}
+          statusLabel={detail.status_label}
         />
       </Surface>
 

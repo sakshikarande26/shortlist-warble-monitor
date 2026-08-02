@@ -5,14 +5,24 @@ interface GrowthChartProps {
   trajectory: TrajectoryPoint[];
   isGone: boolean;
   goneSimHours: number | null;
+  statusLabel: string;
 }
 
 const WIDTH = 640;
 const HEIGHT = 260;
 const PADDING = { top: 16, right: 16, bottom: 28, left: 56 };
-const LINE_COLOR = "#111111";
 const GRIDLINE = "rgb(0 0 0 / 7%)";
 const INK_MUTED = "#6b6b6b";
+
+// The line color echoes the same status color as the badge, so the chart
+// itself reads as "this is what taking off/worth watching looks like,"
+// not just a generic sparkline.
+const LINE_COLORS: Record<string, string> = {
+  "Taking off": "#b5473b",
+  "Worth watching": "#a97a2e",
+  Unavailable: "#8c8299",
+};
+const DEFAULT_LINE_COLOR = "#000000";
 
 // Hand-rolled SVG rather than a charting library — small enough code that a
 // dependency isn't worth it, and it keeps full control over "clean,
@@ -22,7 +32,7 @@ const INK_MUTED = "#6b6b6b";
 // BREAKOUT" points, since that would mean re-running the state machine
 // client-side and duplicating deterministic logic that belongs on the
 // backend only.
-export function GrowthChart({ trajectory, isGone, goneSimHours }: GrowthChartProps) {
+export function GrowthChart({ trajectory, isGone, goneSimHours, statusLabel }: GrowthChartProps) {
   if (trajectory.length < 2) {
     return (
       <div className="flex h-[260px] items-center justify-center rounded-xl border border-line text-sm text-ink-muted">
@@ -31,6 +41,7 @@ export function GrowthChart({ trajectory, isGone, goneSimHours }: GrowthChartPro
     );
   }
 
+  const lineColor = LINE_COLORS[statusLabel] ?? DEFAULT_LINE_COLOR;
   const hours = trajectory.map((p) => p.sim_hours);
   const views = trajectory.map((p) => p.views);
   const minHour = Math.min(...hours);
@@ -59,8 +70,8 @@ export function GrowthChart({ trajectory, isGone, goneSimHours }: GrowthChartPro
     <svg width="100%" viewBox={`0 0 ${WIDTH} ${HEIGHT}`} role="img" aria-label="Views over time">
       <defs>
         <linearGradient id="growth-area" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={LINE_COLOR} stopOpacity={0.1} />
-          <stop offset="100%" stopColor={LINE_COLOR} stopOpacity={0} />
+          <stop offset="0%" stopColor={lineColor} stopOpacity={0.1} />
+          <stop offset="100%" stopColor={lineColor} stopOpacity={0} />
         </linearGradient>
       </defs>
 
@@ -82,7 +93,7 @@ export function GrowthChart({ trajectory, isGone, goneSimHours }: GrowthChartPro
       </text>
 
       <path d={areaPath} fill="url(#growth-area)" stroke="none" />
-      <path d={linePath} fill="none" stroke={LINE_COLOR} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+      <path d={linePath} fill="none" stroke={lineColor} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
 
       {isGone && goneSimHours !== null && goneSimHours >= minHour && goneSimHours <= maxHour && (
         <line
@@ -96,7 +107,7 @@ export function GrowthChart({ trajectory, isGone, goneSimHours }: GrowthChartPro
         />
       )}
 
-      <circle cx={x(last.sim_hours)} cy={y(last.views)} r={4} fill={LINE_COLOR} />
+      <circle cx={x(last.sim_hours)} cy={y(last.views)} r={4} fill={lineColor} />
     </svg>
   );
 }

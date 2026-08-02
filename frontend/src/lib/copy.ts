@@ -2,209 +2,138 @@
 // language only" rule (docs/FRONTEND.md) is auditable in one place instead
 // of scattered across components. Nothing here invents data — every claim
 // is derived from a real field on HomePost/PostDetail.
+//
+// status_label itself is NOT computed here — it comes straight from the
+// API (backend/app/api/routes.py's _unified_status), and every component
+// renders it verbatim. That's deliberate: it's the one canonical status
+// (headline, section membership, row badge, detail page, right panel all
+// use the same value), and a second frontend-side mapping is exactly how a
+// section header and a card's own badge end up disagreeing.
 
-import type { EvidenceDetail, HomePost, PostDetail, PostState } from "./types";
-
-// "Taking off" is the card label (matches the "Act now" section it lives
-// under); "Watch closely" is exclusive to RISING now — WATCH keeps its own
-// distinct label so a creator's post list (which shows every state, not
-// just the two Home triages) never conflates "just jumped, unconfirmed"
-// with "sustained growth for multiple checks."
-const STATE_LABEL: Record<PostState, string> = {
-  BREAKOUT: "Taking off",
-  RISING: "Watch closely",
-  WATCH: "Just jumped",
-  NEW: "Steady",
-  COOLING: "Slowing down",
-};
-
-export function statusLabel(state: PostState, isGone: boolean): string {
-  return isGone ? "No longer available" : STATE_LABEL[state];
-}
+import type { EvidenceDetail, HomePost, HomeResponse, PostDetail, SystemStatus } from "./types";
 
 /** One meaningful, honest statement per card, grounded in this post's own
- * evidence numbers (not a fixed sentence repeated across every post in the
- * same state) — how much views grew, and whether that pace is faster or
- * slower than this post's own earlier trajectory. Falls back to a
- * qualitative line only when there isn't enough history yet to compute
- * evidence (never invents numbers). */
-export function performanceStatement(post: Pick<HomePost, "state" | "is_gone" | "evidence">): string {
+ * evidence numbers — how much it gained, over what window, and how that
+ * compares to what's normal for this creator (or, lacking enough of this
+ * creator's other posts, to its own earlier pace). Never a fixed sentence
+ * repeated across every post in the same status. */
+export function performanceStatement(
+  post: Pick<HomePost, "is_gone" | "status_label" | "evidence">,
+): string {
   if (post.is_gone) {
     return "No longer available — history is preserved below.";
   }
   const evidence = post.evidence;
   if (!evidence) {
-    return performanceStatementFallback(post.state);
+    return "Not enough history yet to say how this is performing.";
+  }
+  if (post.status_label === "Steady") {
+    return "No unusual movement — performing about as expected.";
   }
 
-  // BREAKOUT already gets a specific, absolute-momentum sentence below —
-  // for every other state, the comparative-pace sentence (when available)
-  // is the more honest story: it's why the post made Home's triage list at
-  // all now that ranking is comparative rather than state-based.
-  if (post.state !== "BREAKOUT") {
-    const comparative = describeComparativePace(evidence);
-    if (comparative) return comparative;
-  }
-
-  const growthPhrase = describeGrowth(evidence);
-  const pacePhrase = describePace(evidence);
-
-  switch (post.state) {
-    case "BREAKOUT":
-      return `Views ${growthPhrase} in the latest check, ${pacePhrase}.`;
-    case "RISING":
-      return `Views ${growthPhrase} in the latest check, ${pacePhrase}.`;
-    case "WATCH":
-      return `Views ${growthPhrase} in this one check — too early to confirm it holds.`;
-    case "COOLING":
-      return `Growth has cooled — only ${Math.max(evidence.absolute_gain, 0).toLocaleString()} new views in the latest check.`;
-    case "NEW":
-    default:
-      return "No unusual movement — performing about as expected.";
-  }
-}
-
-function performanceStatementFallback(state: PostState): string {
-  switch (state) {
-    case "BREAKOUT":
-      return "Sustained fast growth across several checks in a row — a real breakout.";
-    case "RISING":
-      return "Growth has held up across multiple checks, not just a one-off spike.";
-    case "WATCH":
-      return "Just jumped — still too early to say if it holds.";
-    case "COOLING":
-      return "Was climbing, but growth has cooled off since.";
-    case "NEW":
-    default:
-      return "No unusual movement — performing about as expected.";
-  }
+  return `${describeGain(evidence)}. ${describeComparativePace(evidence)}`;
 }
 
 /** Short status-line for the top of the detail page — punchier than
  * explainEvidence below it, matching docs/FRONTEND.md's own example style
  * ("Taking off. Sustained unusually fast growth across three checks..."). */
-export function statusSummary(detail: Pick<PostDetail, "state" | "is_gone">): string {
+export function statusSummary(detail: Pick<PostDetail, "status_label" | "is_gone">): string {
   if (detail.is_gone) {
     return "No longer available. History from before it came down is preserved below.";
   }
-  switch (detail.state) {
-    case "BREAKOUT":
+  switch (detail.status_label) {
+    case "Taking off":
       return "Taking off. Sustained growth across several checks in a row.";
-    case "RISING":
-      return "Gaining momentum. Growth has held up across more than one check.";
-    case "WATCH":
-      return "Just started climbing. Still too early to confirm.";
-    case "COOLING":
-      return "Slowing down after an earlier run of growth.";
-    case "NEW":
+    case "Worth watching":
+      return "Worth watching. Growing faster than what's typical for this creator right now.";
+    case "Steady":
     default:
       return "Steady. No unusual movement to report.";
   }
 }
 
-/** The detail page's evidence-to-plain-language translation. Grounded in
- * the real EvidenceDetail numbers — never narrates raw metrics directly,
- * translates them into what they mean. */
-export function explainEvidence(detail: Pick<PostDetail, "state" | "evidence">): string {
+/** The detail page's (and right panel's) evidence-to-plain-language
+ * translation. Grounded in the real EvidenceDetail numbers — never
+ * narrates raw metrics directly, translates them into what they mean. */
+export function explainEvidence(detail: Pick<PostDetail, "status_label" | "is_gone" | "evidence">): string {
+  if (detail.is_gone) {
+    return "This post is no longer available. The history below is from before it came down.";
+  }
   const evidence = detail.evidence;
   if (!evidence) {
     return "Not enough history yet to explain this post's trajectory.";
   }
-
-  const growthPhrase = describeGrowth(evidence);
-  const pacePhrase = describePace(evidence);
-
-  switch (detail.state) {
-    case "BREAKOUT":
-      return `Momentum has continued across several consecutive checks rather than a one-time spike. In the latest check, views were ${growthPhrase}, ${pacePhrase}.`;
-    case "RISING":
-      return `Growth has held up across more than one check now. In the latest check, views were ${growthPhrase}, ${pacePhrase}.`;
-    case "WATCH":
-      return `One strong check so far — views were ${growthPhrase} — but it's too early to know if this holds.`;
-    case "COOLING":
-      return `Growth has slowed since an earlier run of momentum. The latest check added ${Math.max(evidence.absolute_gain, 0).toLocaleString()} views, not enough to count as still taking off.`;
-    case "NEW":
-    default:
-      return "No unusual growth has shown up yet — the latest check was in line with a normal, steady pace.";
+  if (detail.status_label === "Steady") {
+    return "No unusual growth has shown up yet — the latest check was in line with a normal, steady pace.";
   }
+
+  const streak = describeStreak(evidence.consecutive_qualifying_checks);
+  return `${describeGain(evidence)}. ${describeComparativePace(evidence)}${streak}`;
 }
 
-function describeGrowth(evidence: EvidenceDetail): string {
-  if (evidence.relative_growth_pct >= 1) {
-    return `up ${Math.round(evidence.relative_growth_pct)}%`;
-  }
-  return `up ${Math.max(evidence.absolute_gain, 0).toLocaleString()} views`;
+/** "+3,420 views in 2h" — the gain from the latest check and, when it's
+ * known, the real time window it happened over. Never derives the window
+ * by dividing gain by velocity (that would itself divide by zero on a
+ * flat interval) — it's read directly off the underlying sample
+ * timestamps on the backend. */
+function describeGain(evidence: EvidenceDetail): string {
+  const gain = Math.max(evidence.absolute_gain, 0);
+  const gainText = `+${gain.toLocaleString()} views`;
+  if (evidence.window_hours === null) return gainText;
+  return `${gainText} in ${formatWindow(evidence.window_hours)}`;
 }
 
-function describePace(evidence: EvidenceDetail): string {
-  if (evidence.trajectory_ratio >= 1.5) {
-    return "growing noticeably faster than this post's own early pace";
-  }
-  if (evidence.trajectory_ratio >= 1.05) {
-    return "growing a bit faster than this post's own early pace";
-  }
-  return "close to this post's own early pace";
+function formatWindow(hours: number): string {
+  if (hours < 1) return `${Math.max(Math.round(hours * 60), 1)}m`;
+  if (Number.isInteger(hours)) return `${hours}h`;
+  return `${hours.toFixed(1)}h`;
 }
 
-const SMALL_NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
-
-function numberWord(n: number): string {
-  return n >= 0 && n < SMALL_NUMBER_WORDS.length ? SMALL_NUMBER_WORDS[n] : String(n);
-}
-
-function paceMagnitudePhrase(ratio: number): string {
-  if (ratio >= 2.5) {
-    return `about ${numberWord(Math.round(ratio))} times faster`;
-  }
-  if (ratio >= 1.6) return "notably faster";
-  return "faster";
-}
-
-/** Home's comparative-ranking sentence: how a post's current pace compares
- * to what's typical for THIS creator specifically (or, lacking enough of
- * this creator's other posts to compare against, to the post's own earlier
- * pace) — the reason a post not yet flagged BREAKOUT can still be worth a
- * marketer's attention on a quiet day. Returns null when there's no
- * comparative signal to describe (post/creator detail views, where it
- * isn't computed) — callers fall back to other evidence-based phrasing. */
-function describeComparativePace(evidence: EvidenceDetail): string | null {
+/** "2.4× faster than this creator's normal pace at this age" — the
+ * comparative signal that ranks Home in the first place, folded into one
+ * plain sentence. Never a bare multiplier on its own: when it can't be
+ * trusted (too little history for either a creator or self comparison),
+ * says so honestly rather than fabricating a number. */
+function describeComparativePace(evidence: EvidenceDetail): string {
   const { creator_pace_ratio: ratio, creator_pace_basis: basis } = evidence;
-  if (ratio === null || basis === null) return null;
-  const magnitude = paceMagnitudePhrase(ratio);
+  if (ratio === null || basis === null) {
+    return "Not enough history yet to compare its pace.";
+  }
+  const multiple = `${ratio.toFixed(1)}×`;
   return basis === "creator"
-    ? `Growing ${magnitude} than this creator's posts usually do at this age.`
-    : `Growing ${magnitude} than earlier in its own run.`;
+    ? `${multiple} faster than this creator's normal pace at this age.`
+    : `${multiple} faster than earlier in its own run.`;
 }
 
-/** Considerations, never autonomous actions — the marketer decides. */
-export function suggestedActions(state: PostState, isGone: boolean): string[] {
+function describeStreak(consecutiveChecks: number): string {
+  if (consecutiveChecks < 2) return "";
+  return ` Elevated for ${consecutiveChecks} checks in a row.`;
+}
+
+/** Considerations, never autonomous actions — the marketer decides. Keyed
+ * off the same canonical status_label as everything else, not a separate
+ * absolute-state mapping. */
+export function suggestedActions(statusLabel: string, isGone: boolean): string[] {
   if (isGone) {
     return [
       "This post is no longer available, so there's nothing to promote directly.",
       "If it was performing well before it came down, consider a follow-up post with this creator.",
     ];
   }
-  switch (state) {
-    case "BREAKOUT":
+  switch (statusLabel) {
+    case "Taking off":
       return [
         "Consider boosting with paid spend while momentum is still rising.",
         "Consider resharing on brand channels to extend its reach.",
         "Consider extending this creator's deal while they're hot.",
         "Check usage rights before promoting further.",
       ];
-    case "RISING":
+    case "Worth watching":
       return [
         "Worth watching closely — if growth continues, boosting could pay off.",
         "Consider resharing on brand channels now, at low risk.",
       ];
-    case "WATCH":
-      return ["Too early to act — keep watching to see if this holds."];
-    case "COOLING":
-      return [
-        "Momentum has passed its peak — reshares or spend are unlikely to have the same impact now.",
-        "Worth reviewing what worked here for future posts with this creator.",
-      ];
-    case "NEW":
+    case "Steady":
     default:
       return ["Nothing unusual yet — keep watching along with the rest of this creator's posts."];
   }
@@ -238,6 +167,16 @@ const STALE_THRESHOLD_HOURS = 6;
 export function isStale(latestSimHours: number | null, currentSimHours: number | null): boolean {
   if (latestSimHours === null || currentSimHours === null) return false;
   return currentSimHours - latestSimHours >= STALE_THRESHOLD_HOURS;
+}
+
+/** The monitoring window runs for 7 sim-days (CLAUDE.md). "Day 3 of 7" is
+ * grounded in the real sim_hours number but means something to a marketer
+ * in a way a raw "hour 62" reading never does. */
+const MONITORING_WINDOW_DAYS = 7;
+
+export function formatMonitoringProgress(simHours: number): string {
+  const day = Math.min(Math.floor(simHours / 24) + 1, MONITORING_WINDOW_DAYS);
+  return `Day ${day} of ${MONITORING_WINDOW_DAYS}`;
 }
 
 export function formatPublishedAt(publishedAt: string | null): string {
@@ -297,4 +236,100 @@ export function buildBriefing(actNowCount: number, watchCount: number, unavailab
 
 function capitalize(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+// ---------------------------------------------------------------------
+// AI teammate: pre-built questions with deterministic, evidence-grounded
+// answers. No LLM wired up yet — every answer here is built from the same
+// real fields the rest of the app already uses, phrased as a helpful
+// colleague would say it. When the LLM is added later, these become the
+// fallback path (docs/FRONTEND.md: the product must stay honest even if
+// the LLM is unavailable), not thrown away.
+// ---------------------------------------------------------------------
+
+/** Small evidence tags shown under an answer — "+408 in 30m", "14.1×
+ * baseline", "3 elevated checks" — so a claim is never just asserted. */
+export function evidenceChips(evidence: EvidenceDetail | null): string[] {
+  if (!evidence) return [];
+  const chips: string[] = [];
+  const gain = Math.max(evidence.absolute_gain, 0);
+  chips.push(
+    evidence.window_hours !== null
+      ? `+${gain.toLocaleString()} in ${formatWindow(evidence.window_hours)}`
+      : `+${gain.toLocaleString()} views`,
+  );
+  if (evidence.creator_pace_ratio !== null) {
+    chips.push(`${evidence.creator_pace_ratio.toFixed(1)}× baseline`);
+  }
+  if (evidence.consecutive_qualifying_checks >= 2) {
+    chips.push(`${evidence.consecutive_qualifying_checks} elevated checks`);
+  }
+  return chips;
+}
+
+export function answerWhyStatus(post: Pick<PostDetail, "status_label" | "is_gone" | "evidence">): string {
+  return explainEvidence(post);
+}
+
+export function answerWhatChanged(post: Pick<PostDetail, "is_gone" | "evidence">): string {
+  if (post.is_gone) return "No new activity — this post is no longer live.";
+  if (!post.evidence) return "Not enough history yet to describe a recent change.";
+  return describeGain(post.evidence);
+}
+
+export function answerBaselineComparison(post: Pick<PostDetail, "is_gone" | "evidence">): string {
+  if (post.is_gone) return "Comparison isn't meaningful for a post that's no longer live.";
+  if (!post.evidence) return "Not enough history yet to compare its pace.";
+  return describeComparativePace(post.evidence);
+}
+
+export function answerAlertStatus(alertSent: boolean, isGone: boolean): string {
+  if (alertSent) return "Yes — an official breakout alert has been sent for this post.";
+  if (isGone) return "No alert was sent before this post became unavailable.";
+  return "No alert has been sent for this post yet.";
+}
+
+export function answerNextSteps(statusLabel: string, isGone: boolean): string {
+  return suggestedActions(statusLabel, isGone).join(" ");
+}
+
+export function answerWhatChangedSinceLastCheck(status: SystemStatus): string {
+  if (!status.most_notable_post) return "Nothing new to flag since the last check.";
+  const p = status.most_notable_post;
+  const caption = p.caption ? ` — "${p.caption}"` : "";
+  return `@${p.creator_handle}${caption} is the most recently updated post worth flagging, now ${p.status_label.toLowerCase()}.`;
+}
+
+export function answerWhichPostsNeedAttention(home: HomeResponse): string {
+  const total = home.act_now.length + home.watch_closely.length;
+  if (total === 0) return "Nothing needs your attention right now.";
+  const parts: string[] = [];
+  if (home.act_now.length > 0) {
+    parts.push(`${home.act_now.length} taking off`);
+  }
+  if (home.watch_closely.length > 0) {
+    parts.push(`${home.watch_closely.length} worth watching`);
+  }
+  return `${capitalize(parts.join(" and "))} right now.`;
+}
+
+export function answerStrongestMomentum(home: HomeResponse): string {
+  const candidates = [...home.act_now, ...home.watch_closely];
+  if (candidates.length === 0) {
+    return "Nothing is currently outperforming what's normal for its creator.";
+  }
+  const strongest = candidates.reduce((best, post) => {
+    const ratio = post.evidence?.creator_pace_ratio ?? -Infinity;
+    const bestRatio = best.evidence?.creator_pace_ratio ?? -Infinity;
+    return ratio > bestRatio ? post : best;
+  });
+  const caption = strongest.caption ? ` — "${strongest.caption}"` : "";
+  return `@${strongest.creator_handle}${caption} has the strongest current momentum.`;
+}
+
+export function answerRecentAlert(status: SystemStatus): string {
+  if (!status.most_recent_alert) return "No alerts have been sent yet.";
+  const a = status.most_recent_alert;
+  const caption = a.caption ? ` — "${a.caption}"` : "";
+  return `An alert was sent for @${a.creator_handle}${caption}.`;
 }

@@ -12,7 +12,7 @@ export function Nav() {
     <nav className="flex w-[220px] shrink-0 flex-col border-r border-line px-6 py-10">
       <div className="mb-10">
         <p className="text-[17px] font-medium tracking-tight text-ink">LongSheet</p>
-        <p className="mt-0.5 text-[13px] text-ink-muted">Creator Content Performance</p>
+        <p className="mt-0.5 text-[13px] text-ink-muted">Performance Monitor</p>
       </div>
 
       <div className="flex flex-col gap-1">
@@ -30,6 +30,18 @@ export function Nav() {
             {item.label}
           </NavLink>
         ))}
+      </div>
+
+      {/* This board is scoped to one connected platform — Warble — the way
+          other tools in the account might connect Instagram or TikTok
+          instead. A small badge, not a switcher, since only Warble exists
+          today. */}
+      <div className="mt-auto border-t border-line pt-4">
+        <p className="text-[11px] font-medium tracking-wider text-ink-muted uppercase">Platform</p>
+        <div className="mt-2 flex items-center gap-2">
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-ink" />
+          <span className="text-sm text-ink">Monitoring on Warble</span>
+        </div>
       </div>
     </nav>
   );

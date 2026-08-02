@@ -1,4 +1,4 @@
-import type { CreatorDetailResponse, CreatorsResponse, HomeResponse, PostDetail } from "./types";
+import type { CreatorDetailResponse, CreatorsResponse, HomeResponse, PostDetail, SystemStatus } from "./types";
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8001";
 
@@ -42,4 +42,8 @@ export function getCreators(): Promise<CreatorsResponse> {
 
 export function getCreatorDetail(creatorId: string): Promise<CreatorDetailResponse> {
   return request<CreatorDetailResponse>(`/api/creators/${encodeURIComponent(creatorId)}`);
+}
+
+export function getStatus(): Promise<SystemStatus> {
+  return request<SystemStatus>("/api/status");
 }

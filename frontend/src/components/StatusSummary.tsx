@@ -1,5 +1,5 @@
 import type { PostDetail } from "../lib/types";
-import { formatRelativeSimTime, isStale, statusLabel, statusSummary } from "../lib/copy";
+import { formatRelativeSimTime, isStale, statusSummary } from "../lib/copy";
 import { StatusPill } from "./ui/StatusPill";
 
 interface StatusSummaryProps {
@@ -7,13 +7,12 @@ interface StatusSummaryProps {
 }
 
 export function StatusSummary({ detail }: StatusSummaryProps) {
-  const label = statusLabel(detail.state, detail.is_gone);
   const latestSimHours = detail.trajectory.at(-1)?.sim_hours ?? null;
   const stale = isStale(latestSimHours, detail.current_sim_hours);
 
   return (
     <div>
-      <StatusPill label={label} />
+      <StatusPill label={detail.status_label} />
       <p className="mt-3 text-[26px] leading-snug font-medium tracking-tight text-ink sm:text-[30px]">
         {statusSummary(detail)}
       </p>

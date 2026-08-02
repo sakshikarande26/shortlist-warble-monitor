@@ -9,7 +9,7 @@ interface SparklineProps {
 // dependency, deliberately restrained (one thin line, no axes, no grid).
 export function Sparkline({ values, width = 88, height = 28, color = "currentColor" }: SparklineProps) {
   if (values.length < 2) {
-    return <div style={{ width, height }} className="flex items-center text-xs text-ink-muted">—</div>;
+    return <div style={{ width, height }} className="flex items-center text-xs text-ink-muted">-</div>;
   }
 
   const min = Math.min(...values);

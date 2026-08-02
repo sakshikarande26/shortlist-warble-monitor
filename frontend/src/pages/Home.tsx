@@ -3,10 +3,12 @@ import { ApiError, getHome } from "../lib/api";
 import type { HomeResponse } from "../lib/types";
 import { Briefing } from "../components/Briefing";
 import { TriageSection } from "../components/TriageSection";
+import { WhileAwaySection } from "../components/WhileAwaySection";
 import { SkeletonLine, SkeletonCard } from "../components/states/Skeleton";
 import { EmptyState } from "../components/states/EmptyState";
 import { ErrorState } from "../components/states/ErrorState";
 import { StatStrip } from "../components/ui/StatStrip";
+import { getLastVisitSimHours, setLastVisitSimHours } from "../lib/lastVisit";
 
 type LoadState =
   | { status: "loading" }
@@ -47,6 +49,30 @@ export function Home() {
 function HomeContent({ data }: { data: HomeResponse }) {
   const { act_now, watch_closely, total_posts, unavailable_count, current_sim_hours } = data;
 
+  // Which act_now posts became notable since the marketer's last visit —
+  // a side effect (reading/writing localStorage), so it belongs in an
+  // effect, not useMemo. Runs once per real data load (keyed on
+  // current_sim_hours, which only changes when a genuinely new response
+  // arrives), reading the previous marker before overwriting it.
+  const [whileAwayIds, setWhileAwayIds] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    if (current_sim_hours === null) return;
+    const previousVisit = getLastVisitSimHours();
+    setLastVisitSimHours(current_sim_hours);
+    if (previousVisit === null) {
+      setWhileAwayIds(new Set()); // first-ever visit — nothing to compare against
+      return;
+    }
+    setWhileAwayIds(
+      new Set(
+        act_now
+          .filter((p) => p.latest_sim_hours !== null && p.latest_sim_hours > previousVisit)
+          .map((p) => p.post_id),
+      ),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current_sim_hours]);
+
   if (total_posts === 0) {
     return (
       <EmptyState
@@ -66,6 +92,8 @@ function HomeContent({ data }: { data: HomeResponse }) {
     );
   }
 
+  const whileAwayPosts = act_now.filter((p) => whileAwayIds.has(p.post_id));
+
   return (
     <div className="space-y-8">
       <Briefing
@@ -80,6 +108,7 @@ function HomeContent({ data }: { data: HomeResponse }) {
           { label: "Unavailable", value: String(unavailable_count) },
         ]}
       />
+      <WhileAwaySection posts={whileAwayPosts} />
       <TriageSection
         title="Act now"
         emptyMessage="Nothing is taking off right now"

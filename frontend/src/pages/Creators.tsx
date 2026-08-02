@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ApiError, getCreators } from "../lib/api";
 import type { CreatorsResponse } from "../lib/types";
-import { formatFollowers, getInitials, statusLabel } from "../lib/copy";
+import { formatFollowers, getInitials } from "../lib/copy";
 import { SkeletonCard, SkeletonLine } from "../components/states/Skeleton";
 import { EmptyState } from "../components/states/EmptyState";
 import { ErrorState } from "../components/states/ErrorState";
@@ -85,13 +85,15 @@ function CreatorsList({ data }: { data: CreatorsResponse }) {
               {formatFollowers(creator.followers)} · {creator.active_post_count} active post
               {creator.active_post_count === 1 ? "" : "s"}
             </p>
-            {creator.strongest_post ? (
+            {creator.active_post_count === 0 ? (
+              <p className="mt-1 text-sm text-ink-muted">No active posts right now</p>
+            ) : creator.strongest_post ? (
               <p className="mt-1 truncate text-sm text-ink">
                 Strongest: {creator.strongest_post.caption ?? "Untitled post"} —{" "}
-                {statusLabel(creator.strongest_post.state, false)}
+                {creator.strongest_post.status_label}
               </p>
             ) : (
-              <p className="mt-1 text-sm text-ink-muted">No active posts right now</p>
+              <p className="mt-1 text-sm text-ink-muted">No current momentum to report</p>
             )}
           </div>
         </Link>

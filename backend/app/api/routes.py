@@ -5,14 +5,14 @@ never calls the Warble API, never touches collector/detector/alert logic.
 import statistics
 from collections import defaultdict
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import (
-    NEEDS_ATTENTION_STATES,
-    STATE_LABELS,
+    AlertSummary,
     CreatorContext,
     CreatorDetailResponse,
     CreatorPostSummary,
@@ -23,30 +23,45 @@ from app.api.schemas import (
     EvidenceDetail,
     HomePost,
     HomeResponse,
+    NotablePost,
     PostDetail,
+    SystemStatus,
     TrajectoryPoint,
 )
-from app.db import dao
 from app.db.base import get_session
-from app.db.models import Creator, Post, Sample
-from app.detector.evaluate import evaluate_post, evaluate_post_from_db
-from app.detector.momentum import SamplePoint, _dedupe_samples, compute_interval_signals
-from app.detector.states import run_state_machine
+from app.db.models import Alert, Creator, Post, Sample
+from app.detector.evaluate import evaluate_post
+from app.detector.momentum import IntervalSignal, SamplePoint, _dedupe_samples, compute_interval_signals
+from app.detector.states import PostState, run_state_machine
 
 router = APIRouter()
 
 SPARKLINE_POINTS = 12
 
-# --- Comparative ranking (Home only — presentation-layer, not the detector).
-# A post has to meaningfully beat the creator's own norm to count as a
-# "mover," not just edge past 1.0x on noise — this is what lets Home say so
-# honestly when nothing is actually moving instead of padding the list with
-# flat posts.
+# --- Canonical status vocabulary (presentation-layer, not the detector).
+# Exactly one function computes this, and every endpoint calls it — the
+# whole point is that the headline, section a post lands in, its own card
+# badge, its detail page, and the right-hand panel can never disagree,
+# because they're never each computing their own opinion of "what state is
+# this post in."
+_TAKING_OFF = "Taking off"
+_WORTH_WATCHING = "Worth watching"
+_STEADY = "Steady"
+_UNAVAILABLE = "Unavailable"
+
+# A post has to meaningfully beat the creator's own norm to count as
+# "worth watching," not just edge past 1.0x on noise — this is what lets
+# Home (and every other surface) say so honestly when nothing is actually
+# moving instead of padding the list with flat posts.
 _MOVER_RATIO_THRESHOLD = 1.15
 _SECTION_CAP = 5  # triage list, not a leaderboard
 _MIN_BASELINE_POINTS = 2  # fewer than this and there's no real "typical" to compare against
 _BASELINE_NEIGHBORS = 5  # nearest-by-age points from the creator's other posts used for the baseline
 _MIN_BASELINE_VELOCITY = 1.0  # views/sim-hour below which "typical" is too close to zero to divide by
+# Ratios past this point can only come from a near-zero baseline blowing up
+# the division, not a real signal — treated the same as "can't be
+# computed" (None) rather than displayed as a fake precise-looking multiple.
+_MAX_SANE_PACE_RATIO = 20.0
 
 
 async def get_db() -> AsyncIterator[AsyncSession]:
@@ -90,14 +105,51 @@ async def _samples_by_post(session: AsyncSession, post_ids: list[str]) -> dict[s
     return samples_by_post
 
 
+def _window_hours(sample_points: list[SamplePoint]) -> float | None:
+    """Duration of the latest interval, read directly off the two samples
+    that produced it — never derived by dividing gain by velocity, which
+    would itself divide by zero on a flat (zero-gain) interval."""
+    deduped = _dedupe_samples(sample_points)
+    if len(deduped) < 2:
+        return None
+    return deduped[-1].sim_hours - deduped[-2].sim_hours
+
+
+def _consecutive_qualifying(signals: list[IntervalSignal]) -> int:
+    """How many checks in a row, ending at the latest, showed qualifying
+    momentum — reads compute_interval_signals' own `qualifies` flag
+    (already computed by the detector for the state machine), it doesn't
+    reimplement the detector's qualification logic."""
+    count = 0
+    for signal in reversed(signals):
+        if not signal.qualifies:
+            break
+        count += 1
+    return count
+
+
+def _sane_ratio(value: float) -> float | None:
+    """Reject a ratio rather than display it when it can't be trusted:
+    NaN/inf (bad arithmetic), zero-or-negative (shouldn't happen for a
+    velocity ratio but never trust that blindly), or absurdly large (a
+    near-zero baseline blew up the division). "Not enough history" is the
+    honest story in every one of these cases — never a fabricated number.
+    """
+    if value != value or value in (float("inf"), float("-inf")):
+        return None
+    if value <= 0 or value > _MAX_SANE_PACE_RATIO:
+        return None
+    return value
+
+
 def _build_evidence(
     sample_points: list[SamplePoint],
     followers: int,
+    signals: list[IntervalSignal],
     *,
     creator_pace_ratio: float | None = None,
     creator_pace_basis: str | None = None,
 ) -> EvidenceDetail | None:
-    signals = compute_interval_signals(sample_points, followers)
     if not signals:
         return None
     latest_signal = signals[-1]
@@ -108,6 +160,8 @@ def _build_evidence(
         velocity=latest_signal.velocity,
         follower_velocity=latest_signal.follower_velocity,
         trajectory_ratio=latest_signal.trajectory_ratio,
+        window_hours=_window_hours(sample_points),
+        consecutive_qualifying_checks=_consecutive_qualifying(signals),
         creator_pace_ratio=creator_pace_ratio,
         creator_pace_basis=creator_pace_basis,
     )
@@ -118,7 +172,7 @@ def _creator_pace_ratio(
     post_velocity: float,
     self_trajectory_ratio: float,
     other_points: list[tuple[float, float]],
-) -> tuple[float, str]:
+) -> tuple[float | None, str | None]:
     """Compare a post's current velocity against how fast this creator's
     OTHER posts were typically growing at a similar age — "that creator's
     typical trajectory for posts of a similar age." `other_points` is
@@ -127,46 +181,76 @@ def _creator_pace_ratio(
     computed by the detector) when the creator doesn't have enough other
     posts with signals to build a meaningful baseline from, OR when the
     other posts' baseline pace is itself too close to zero to be a
-    meaningful denominator — most of a creator's posts sitting flat isn't
-    "a typical trajectory," and dividing by a near-zero baseline would
-    produce a huge, meaningless ratio rather than an honest comparison.
+    meaningful denominator. Returns (None, None) — "not enough history" —
+    rather than a fabricated number whenever neither comparison holds up.
     """
-    if len(other_points) < _MIN_BASELINE_POINTS:
-        return self_trajectory_ratio, "self"
+    if len(other_points) >= _MIN_BASELINE_POINTS:
+        nearest = sorted(other_points, key=lambda p: abs(p[0] - post_age))[:_BASELINE_NEIGHBORS]
+        baseline_velocity = statistics.median(v for _, v in nearest)
+        if baseline_velocity >= _MIN_BASELINE_VELOCITY:
+            ratio = _sane_ratio(post_velocity / baseline_velocity)
+            if ratio is not None:
+                return ratio, "creator"
 
-    nearest = sorted(other_points, key=lambda p: abs(p[0] - post_age))[:_BASELINE_NEIGHBORS]
-    baseline_velocity = statistics.median(v for _, v in nearest)
-    if baseline_velocity < _MIN_BASELINE_VELOCITY:
-        return self_trajectory_ratio, "self"
-    return post_velocity / baseline_velocity, "creator"
+    self_ratio = _sane_ratio(self_trajectory_ratio)
+    if self_ratio is not None:
+        return self_ratio, "self"
+    return None, None
 
 
-@router.get("/home", response_model=HomeResponse)
-async def get_home(session: AsyncSession = Depends(get_db)) -> HomeResponse:
-    creators = {c.id: c for c in (await session.execute(select(Creator))).scalars().all()}
-    posts = (await session.execute(select(Post))).scalars().all()
-    post_ids = [p.id for p in posts]
-    samples_by_post = await _samples_by_post(session, post_ids)
+def _unified_status(state: PostState, is_gone: bool, pace_ratio: float | None) -> str:
+    """The one canonical status shown everywhere — headline, section
+    membership, row badge, detail page, right panel. Nothing else computes
+    its own opinion of what state a post is in, so nothing can disagree
+    with it."""
+    if is_gone:
+        return _UNAVAILABLE
+    if state == "BREAKOUT":
+        return _TAKING_OFF
+    if pace_ratio is not None and pace_ratio >= _MOVER_RATIO_THRESHOLD:
+        return _WORTH_WATCHING
+    return _STEADY
 
-    # Pass 1: each post's own detector result + interval signals. Signals
-    # are needed twice — once for this post's own evidence, once as raw
-    # material for every OTHER post-of-the-same-creator's baseline below —
-    # so they're computed once here and reused rather than recomputed.
-    signals_by_post: dict[str, list] = {}
+
+@dataclass
+class _PostComputation:
+    state: PostState
+    score: float
+    reason: str
+    status_label: str
+    evidence: EvidenceDetail | None
+    signals: list[IntervalSignal]
+    sample_points: list[SamplePoint]
+    latest: Sample | None
+
+
+def _compute_posts(
+    posts: list[Post],
+    samples_by_post: dict[str, list[Sample]],
+    followers_by_creator: dict[str, int],
+) -> dict[str, _PostComputation]:
+    """Evaluates every post in `posts`, comparing each one against every
+    OTHER post that shares its creator_id within this same set. Works for
+    the whole watchlist (Home, system status) or a single creator's posts
+    (creator roster/detail, a post's own detail alongside its siblings) —
+    the comparison is always scoped by creator_id, not by how many posts
+    happen to be passed in. This is the one place status/evidence gets
+    computed; every endpoint calls it instead of computing its own.
+    """
+    signals_by_post: dict[str, list[IntervalSignal]] = {}
     results_by_post = {}
     for post in posts:
-        creator = creators.get(post.creator_id)
-        followers = creator.followers if creator else 1
+        followers = followers_by_creator.get(post.creator_id, 1)
         samples = samples_by_post.get(post.id, [])
         sample_points = [SamplePoint(sim_hours=s.sim_hours, views=s.views) for s in samples]
         signals_by_post[post.id] = compute_interval_signals(sample_points, followers)
         results_by_post[post.id] = evaluate_post(sample_points, followers)
 
-    # Pass 2: per-creator pool of (age, velocity) points from every active
-    # post's signals — "that creator's other posts' sample histories," the
-    # baseline the comparative ranking is measured against. Gone posts are
-    # excluded: a post's history after it was taken down isn't a fair
-    # picture of this creator's normal, ongoing pace.
+    # Per-creator pool of (age, velocity) points from every active post's
+    # signals — "that creator's other posts' sample histories," the
+    # baseline the comparison is measured against. Gone posts are excluded:
+    # a post's history after it was taken down isn't a fair picture of this
+    # creator's normal, ongoing pace.
     points_by_creator: dict[str, list[tuple[str, float, float]]] = defaultdict(list)
     for post in posts:
         if post.status == "gone":
@@ -175,23 +259,18 @@ async def get_home(session: AsyncSession = Depends(get_db)) -> HomeResponse:
             age = signal.sim_hours - post.first_seen_sim_hours
             points_by_creator[post.creator_id].append((post.id, age, signal.velocity))
 
-    # Pass 3: assemble each HomePost, including its comparative pace against
-    # the creator-level baseline from pass 2 (excluding the post's own
-    # points from its own baseline).
-    home_posts: dict[str, HomePost] = {}
+    computations: dict[str, _PostComputation] = {}
     for post in posts:
-        creator = creators.get(post.creator_id)
-        followers = creator.followers if creator else 1
+        followers = followers_by_creator.get(post.creator_id, 1)
         samples = samples_by_post.get(post.id, [])
         sample_points = [SamplePoint(sim_hours=s.sim_hours, views=s.views) for s in samples]
         signals = signals_by_post[post.id]
         result = results_by_post[post.id]
-        latest = _latest_reading(samples)
-        sparkline = [p.views for p in _dedupe_samples(sample_points)[-SPARKLINE_POINTS:]]
+        is_gone = post.status == "gone"
 
         pace_ratio: float | None = None
         pace_basis: str | None = None
-        if signals and post.status != "gone":
+        if signals and not is_gone:
             latest_signal = signals[-1]
             post_age = latest_signal.sim_hours - post.first_seen_sim_hours
             other_points = [
@@ -203,52 +282,77 @@ async def get_home(session: AsyncSession = Depends(get_db)) -> HomeResponse:
                 post_age, latest_signal.velocity, latest_signal.trajectory_ratio, other_points
             )
 
-        home_posts[post.id] = HomePost(
-            post_id=post.id,
-            creator_handle=creator.handle if creator else "unknown",
-            creator_followers=followers,
-            caption=post.caption,
-            published_at=post.published_at,
-            views=latest.views if latest else 0,
-            likes=latest.likes if latest else 0,
-            comments=latest.comments if latest else 0,
+        status_label = _unified_status(result.state, is_gone, pace_ratio)
+        evidence = _build_evidence(
+            sample_points,
+            followers,
+            signals,
+            creator_pace_ratio=pace_ratio,
+            creator_pace_basis=pace_basis,
+        )
+        computations[post.id] = _PostComputation(
             state=result.state,
             score=result.score,
             reason=result.reason,
-            status_label=STATE_LABELS[result.state],
-            evidence=_build_evidence(
-                sample_points, followers, creator_pace_ratio=pace_ratio, creator_pace_basis=pace_basis
-            ),
+            status_label=status_label,
+            evidence=evidence,
+            signals=signals,
+            sample_points=sample_points,
+            latest=_latest_reading(samples),
+        )
+    return computations
+
+
+@router.get("/home", response_model=HomeResponse)
+async def get_home(session: AsyncSession = Depends(get_db)) -> HomeResponse:
+    creators = {c.id: c for c in (await session.execute(select(Creator))).scalars().all()}
+    posts = (await session.execute(select(Post))).scalars().all()
+    post_ids = [p.id for p in posts]
+    samples_by_post = await _samples_by_post(session, post_ids)
+    followers_by_creator = {cid: c.followers for cid, c in creators.items()}
+
+    computations = _compute_posts(posts, samples_by_post, followers_by_creator)
+
+    home_posts: dict[str, HomePost] = {}
+    for post in posts:
+        creator = creators.get(post.creator_id)
+        comp = computations[post.id]
+        sparkline = [p.views for p in _dedupe_samples(comp.sample_points)[-SPARKLINE_POINTS:]]
+
+        home_posts[post.id] = HomePost(
+            post_id=post.id,
+            creator_handle=creator.handle if creator else "unknown",
+            creator_followers=creator.followers if creator else 1,
+            caption=post.caption,
+            published_at=post.published_at,
+            views=comp.latest.views if comp.latest else 0,
+            likes=comp.latest.likes if comp.latest else 0,
+            comments=comp.latest.comments if comp.latest else 0,
+            state=comp.state,
+            score=comp.score,
+            reason=comp.reason,
+            status_label=comp.status_label,
+            evidence=comp.evidence,
             is_gone=post.status == "gone",
-            latest_sim_hours=latest.sim_hours if latest else None,
+            latest_sim_hours=comp.latest.sim_hours if comp.latest else None,
             sparkline=sparkline,
         )
 
-    # Selection: BREAKOUT is unconditional and unranked by comparison
-    # ("posts in confirmed BREAKOUT state (unchanged)"). Everything else is
-    # ranked purely by comparative pace against the creator's own norm,
-    # never by absolute state — a post the detector has never flagged can
-    # still surface here if it's genuinely outperforming what's typical for
-    # that specific creator, which is the actual fix for quiet days.
+    # Section membership matches status_label exactly: Act now is only
+    # "Taking off" posts, Watch closely is only "Worth watching" posts — a
+    # section header and every card inside it can never disagree, because
+    # membership IS the same canonical label the card displays.
     active_posts = [p for p in home_posts.values() if not p.is_gone]
-    breakout_posts = [p for p in active_posts if p.state == "BREAKOUT"]
-    breakout_ids = {p.post_id for p in breakout_posts}
 
     def pace(p: HomePost) -> float:
         if p.evidence is None or p.evidence.creator_pace_ratio is None:
             return float("-inf")
         return p.evidence.creator_pace_ratio
 
-    movers = sorted(
-        (p for p in active_posts if p.post_id not in breakout_ids and pace(p) >= _MOVER_RATIO_THRESHOLD),
-        key=pace,
-        reverse=True,
-    )
-
-    act_now_extra_slots = max(0, _SECTION_CAP - len(breakout_posts))
-    act_now_movers = movers[:act_now_extra_slots]
-    act_now = sorted(breakout_posts + act_now_movers, key=pace, reverse=True)
-    watch_closely = movers[act_now_extra_slots:][:_SECTION_CAP]
+    taking_off = [p for p in active_posts if p.status_label == _TAKING_OFF]
+    worth_watching = [p for p in active_posts if p.status_label == _WORTH_WATCHING]
+    act_now = sorted(taking_off, key=pace, reverse=True)[:_SECTION_CAP]
+    watch_closely = sorted(worth_watching, key=pace, reverse=True)[:_SECTION_CAP]
 
     return HomeResponse(
         act_now=act_now,
@@ -256,6 +360,63 @@ async def get_home(session: AsyncSession = Depends(get_db)) -> HomeResponse:
         total_posts=len(posts),
         unavailable_count=sum(1 for p in home_posts.values() if p.is_gone),
         current_sim_hours=await _current_sim_hours(session),
+    )
+
+
+@router.get("/status", response_model=SystemStatus)
+async def get_status(session: AsyncSession = Depends(get_db)) -> SystemStatus:
+    """Backs the right-hand panel's idle state — real system context
+    instead of a placeholder, when no post is selected."""
+    creators = {c.id: c for c in (await session.execute(select(Creator))).scalars().all()}
+    posts = (await session.execute(select(Post))).scalars().all()
+    post_ids = [p.id for p in posts]
+    samples_by_post = await _samples_by_post(session, post_ids)
+    followers_by_creator = {cid: c.followers for cid, c in creators.items()}
+
+    computations = _compute_posts(posts, samples_by_post, followers_by_creator)
+
+    # "Most recent status change" without persisting a transition-event
+    # log: the most recently-updated post that's currently notable is an
+    # honest, cheap stand-in — every input to it (status_label,
+    # latest_sim_hours) is real, nothing here is invented.
+    notable = [
+        post
+        for post in posts
+        if computations[post.id].status_label in (_TAKING_OFF, _WORTH_WATCHING)
+        and computations[post.id].latest is not None
+    ]
+    most_notable_post = None
+    if notable:
+        best = max(notable, key=lambda p: computations[p.id].latest.sim_hours)  # type: ignore[union-attr]
+        comp = computations[best.id]
+        creator = creators.get(best.creator_id)
+        most_notable_post = NotablePost(
+            post_id=best.id,
+            creator_handle=creator.handle if creator else "unknown",
+            caption=best.caption,
+            status_label=comp.status_label,
+            sim_hours=comp.latest.sim_hours,  # type: ignore[union-attr]
+        )
+
+    alert_row = (
+        await session.execute(select(Alert).order_by(Alert.decided_sim_hours.desc()).limit(1))
+    ).scalar_one_or_none()
+    most_recent_alert = None
+    if alert_row is not None:
+        alert_post = next((p for p in posts if p.id == alert_row.post_id), None)
+        creator = creators.get(alert_post.creator_id) if alert_post else None
+        most_recent_alert = AlertSummary(
+            post_id=alert_row.post_id,
+            creator_handle=creator.handle if creator else "unknown",
+            caption=alert_post.caption if alert_post else None,
+            sim_hours=alert_row.decided_sim_hours,
+        )
+
+    return SystemStatus(
+        posts_tracked=len(posts),
+        last_checked_sim_hours=await _current_sim_hours(session),
+        most_notable_post=most_notable_post,
+        most_recent_alert=most_recent_alert,
     )
 
 
@@ -268,14 +429,24 @@ async def get_post_detail(post_id: str, session: AsyncSession = Depends(get_db))
     creator = await session.get(Creator, post.creator_id)
     followers = creator.followers if creator else 1
 
-    samples = await dao.get_samples_for_post(session, post_id)
-    sample_points = [SamplePoint(sim_hours=s.sim_hours, views=s.views) for s in samples]
+    # Every post from the same creator, not just this one — needed so this
+    # post's comparative pace (and therefore its status_label) is computed
+    # exactly the same way it would be on Home or the creator's own page.
+    creator_posts = (
+        await session.execute(select(Post).where(Post.creator_id == post.creator_id))
+    ).scalars().all()
+    samples_by_post = await _samples_by_post(session, [p.id for p in creator_posts])
+    computations = _compute_posts(creator_posts, samples_by_post, {post.creator_id: followers})
+    comp = computations[post.id]
 
     trajectory = [
-        TrajectoryPoint(sim_hours=p.sim_hours, views=p.views) for p in _dedupe_samples(sample_points)
+        TrajectoryPoint(sim_hours=p.sim_hours, views=p.views)
+        for p in _dedupe_samples(comp.sample_points)
     ]
 
-    result = await evaluate_post_from_db(session, post_id)
+    alert_row = (
+        await session.execute(select(Alert).where(Alert.post_id == post_id))
+    ).scalar_one_or_none()
 
     creator_context = CreatorContext(
         id=creator.id if creator else post.creator_id,
@@ -295,11 +466,12 @@ async def get_post_detail(post_id: str, session: AsyncSession = Depends(get_db))
         gone_sim_hours=post.gone_sim_hours,
         creator=creator_context,
         trajectory=trajectory,
-        state=result.state,
-        score=result.score,
-        status_label=STATE_LABELS[result.state],
-        reason=result.reason,
-        evidence=_build_evidence(sample_points, followers),
+        state=comp.state,
+        score=comp.score,
+        status_label=comp.status_label,
+        reason=comp.reason,
+        evidence=comp.evidence,
+        alert_sent=alert_row is not None and alert_row.submitted,
         current_sim_hours=await _current_sim_hours(session),
     )
 
@@ -310,6 +482,7 @@ async def get_creators(session: AsyncSession = Depends(get_db)) -> CreatorsRespo
     posts = (await session.execute(select(Post))).scalars().all()
     post_ids = [p.id for p in posts]
     samples_by_post = await _samples_by_post(session, post_ids)
+    followers_by_creator = {c.id: c.followers for c in creators}
 
     posts_by_creator: dict[str, list[Post]] = defaultdict(list)
     for post in posts:
@@ -317,27 +490,37 @@ async def get_creators(session: AsyncSession = Depends(get_db)) -> CreatorsRespo
 
     entries: list[CreatorRosterEntry] = []
     for creator in creators:
-        active_posts = [p for p in posts_by_creator.get(creator.id, []) if p.status != "gone"]
+        creator_posts = posts_by_creator.get(creator.id, [])
+        active_posts = [p for p in creator_posts if p.status != "gone"]
+        computations = _compute_posts(creator_posts, samples_by_post, followers_by_creator)
 
-        results = {}
-        for post in active_posts:
-            samples = samples_by_post.get(post.id, [])
-            sample_points = [SamplePoint(sim_hours=s.sim_hours, views=s.views) for s in samples]
-            results[post.id] = evaluate_post(sample_points, creator.followers)
+        needs_attention_count = sum(
+            1 for p in active_posts if computations[p.id].status_label in (_TAKING_OFF, _WORTH_WATCHING)
+        )
 
-        needs_attention_count = sum(1 for r in results.values() if r.state in NEEDS_ATTENTION_STATES)
-
+        # "Strongest recent post" is current momentum, not lifetime views —
+        # ranked by comparative pace, never by absolute score. If nothing
+        # has a trustworthy comparative signal, there's honestly nothing to
+        # call out, rather than defaulting to an arbitrary pick.
+        movers = [
+            p
+            for p in active_posts
+            if computations[p.id].evidence is not None
+            and computations[p.id].evidence.creator_pace_ratio is not None  # type: ignore[union-attr]
+        ]
         strongest_post = None
-        if results:
-            strongest_id = max(results, key=lambda pid: results[pid].score)
-            strongest_result = results[strongest_id]
-            strongest_post_row = next(p for p in active_posts if p.id == strongest_id)
+        if movers:
+            best = max(
+                movers,
+                key=lambda p: computations[p.id].evidence.creator_pace_ratio,  # type: ignore[union-attr]
+            )
+            comp = computations[best.id]
             strongest_post = CreatorRosterPost(
-                post_id=strongest_id,
-                caption=strongest_post_row.caption,
-                state=strongest_result.state,
-                status_label=STATE_LABELS[strongest_result.state],
-                score=strongest_result.score,
+                post_id=best.id,
+                caption=best.caption,
+                state=comp.state,
+                status_label=comp.status_label,
+                score=comp.score,
             )
 
         entries.append(
@@ -366,8 +549,8 @@ async def get_creator_detail(
     posts = (
         await session.execute(select(Post).where(Post.creator_id == creator_id))
     ).scalars().all()
-    post_ids = [p.id for p in posts]
-    samples_by_post = await _samples_by_post(session, post_ids)
+    samples_by_post = await _samples_by_post(session, [p.id for p in posts])
+    computations = _compute_posts(posts, samples_by_post, {creator_id: creator.followers})
 
     active_posts: list[CreatorPostSummary] = []
     unavailable_posts: list[CreatorPostSummary] = []
@@ -375,38 +558,39 @@ async def get_creator_detail(
     latest_views: list[int] = []
 
     for post in posts:
-        samples = samples_by_post.get(post.id, [])
-        sample_points = [SamplePoint(sim_hours=s.sim_hours, views=s.views) for s in samples]
+        comp = computations[post.id]
+        is_gone = post.status == "gone"
 
-        # Full history (not just the latest state) — a post's current state
-        # may have cooled off since it broke out, but "ever took off" is
-        # still true and is what the roster stat is meant to answer.
-        signals = compute_interval_signals(sample_points, creator.followers)
-        history = run_state_machine(signals)
+        # Full history (not just latest state) for "ever took off" — a
+        # post's current state may have cooled off since it broke out.
+        history = run_state_machine(comp.signals)
         if any(s.state == "BREAKOUT" for s in history):
             ever_took_off += 1
 
-        result = evaluate_post(sample_points, creator.followers)
-        latest = _latest_reading(samples)
-        if latest is not None and post.status != "gone":
-            latest_views.append(latest.views)
-        sparkline = [p.views for p in _dedupe_samples(sample_points)[-SPARKLINE_POINTS:]]
+        if comp.latest is not None and not is_gone:
+            latest_views.append(comp.latest.views)
+        sparkline = [p.views for p in _dedupe_samples(comp.sample_points)[-SPARKLINE_POINTS:]]
 
         summary = CreatorPostSummary(
             post_id=post.id,
             caption=post.caption,
             published_at=post.published_at,
-            state=result.state,
-            status_label=STATE_LABELS[result.state],
-            score=result.score,
-            evidence=_build_evidence(sample_points, creator.followers),
-            is_gone=post.status == "gone",
-            latest_sim_hours=latest.sim_hours if latest else None,
+            state=comp.state,
+            status_label=comp.status_label,
+            score=comp.score,
+            evidence=comp.evidence,
+            is_gone=is_gone,
+            latest_sim_hours=comp.latest.sim_hours if comp.latest else None,
             sparkline=sparkline,
         )
-        (unavailable_posts if post.status == "gone" else active_posts).append(summary)
+        (unavailable_posts if is_gone else active_posts).append(summary)
 
-    active_posts.sort(key=lambda p: p.score, reverse=True)
+    def pace(p: CreatorPostSummary) -> float:
+        if p.evidence is None or p.evidence.creator_pace_ratio is None:
+            return float("-inf")
+        return p.evidence.creator_pace_ratio
+
+    active_posts.sort(key=pace, reverse=True)
     unavailable_posts.sort(key=lambda p: p.latest_sim_hours or 0, reverse=True)
 
     stats = CreatorStats(
