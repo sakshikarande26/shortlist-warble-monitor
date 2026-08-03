@@ -4,7 +4,7 @@
 
 **Content breakout detection for brand-creator programs on social media**
 
-Built by Sakshi Karande for the Shortlist AI Product Engineering take-home
+Built by for the Shortlist AI Product Engineering 
 
 </div>
 
