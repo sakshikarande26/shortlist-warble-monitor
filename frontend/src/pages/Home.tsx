@@ -84,7 +84,7 @@ function HomeContent({ data, status }: { data: HomeResponse; status: SystemStatu
     );
   }
 
-  if (act_now.length === 0 && watch_closely.length === 0) {
+  if (act_now.length === 0 && watch_closely.length === 0 && unavailable_count === 0) {
     return (
       <EmptyState
         title="Nothing needs triage right now"
@@ -107,7 +107,7 @@ function HomeContent({ data, status }: { data: HomeResponse; status: SystemStatu
         cells={[
           { label: "Act now", value: String(act_now.length) },
           { label: "Watching", value: String(watch_closely.length) },
-          { label: "Unavailable", value: String(unavailable_count) },
+          { label: "Unavailable", value: String(unavailable_count), to: "/unavailable" },
         ]}
       />
       <WhileAwaySection posts={whileAwayPosts} />

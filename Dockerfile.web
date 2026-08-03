@@ -14,5 +14,5 @@ RUN uv sync --frozen --no-dev
 # copy the rest of the backend
 COPY backend/ ./
 
-# run migrations, then the always-on collector
-CMD ["sh", "-c", "uv run alembic upgrade head && uv run python -m app.collector.loop"]
+# run migrations, then serve the API on Railway's assigned port
+CMD ["sh", "-c", "uv run alembic upgrade head && uv run uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8001}"]

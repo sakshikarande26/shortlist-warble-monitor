@@ -7,6 +7,7 @@ import { Creators } from "./pages/Creators";
 import { CreatorDetail } from "./pages/CreatorDetail";
 import { PostDetail } from "./pages/PostDetail";
 import { BreakoutLog } from "./pages/BreakoutLog";
+import { UnavailablePosts } from "./pages/UnavailablePosts";
 
 function App() {
   return (
@@ -20,6 +21,7 @@ function App() {
             <Route path="/creators/:creatorId" element={<CreatorDetail />} />
             <Route path="/posts/:postId" element={<PostDetail />} />
             <Route path="/breakouts" element={<BreakoutLog />} />
+            <Route path="/unavailable" element={<UnavailablePosts />} />
           </Route>
         </Routes>
       </BrowserRouter>
