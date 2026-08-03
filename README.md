@@ -87,7 +87,7 @@ npm install
 npm run dev
 ```
 
-**Deployed:** [railway URL]
+**Deployed:** https://shortlist-warble-monitor-production.up.railway.app/
 
 ---
 
