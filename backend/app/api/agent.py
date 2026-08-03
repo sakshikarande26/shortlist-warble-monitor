@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-MODEL = "claude-haiku-4-5"
+MODEL = "claude-haiku-4-5-20251001"
 LLM_TIMEOUT_SECONDS = 10.0
 MAX_HISTORY_MESSAGES = 24  # ~12 turns
 MAX_BREAKOUTS = 10

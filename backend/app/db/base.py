@@ -11,8 +11,6 @@ class Base(DeclarativeBase):
     pass
 
 
-# engine = create_async_engine(settings.database_url)
-
 # pgbouncer (Supabase session pooler) doesn't support prepared statements,
 # so disable asyncpg's statement cache for Postgres. SQLite ignores these.
 _connect_args = {}

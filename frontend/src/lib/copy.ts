@@ -10,14 +10,7 @@
 // use the same value), and a second frontend-side mapping is exactly how a
 // section header and a card's own badge end up disagreeing.
 
-import type {
-  CreatorDetailResponse,
-  EvidenceDetail,
-  HomePost,
-  HomeResponse,
-  PostDetail,
-  SystemStatus,
-} from "./types";
+import type { EvidenceDetail, HomePost, PostDetail } from "./types";
 
 /** One meaningful, honest statement per card, grounded in this post's own
  * evidence numbers — how much it gained, over what window, and how that
@@ -136,35 +129,6 @@ export function creatorInsight(detail: Pick<PostDetail, "creator" | "evidence">)
     : `${audience} Too few other posts from them to compare against yet, so this is measured ${multiple} against the post's own earlier pace.`;
 }
 
-/** Considerations, never autonomous actions — the marketer decides. Keyed
- * off the same canonical status_label as everything else, not a separate
- * absolute-state mapping. */
-export function suggestedActions(statusLabel: string, isGone: boolean): string[] {
-  if (isGone) {
-    return [
-      "This post is no longer available, so there's nothing to promote directly.",
-      "If it was performing well before it came down, consider a follow-up post with this creator.",
-    ];
-  }
-  switch (statusLabel) {
-    case "Taking off":
-      return [
-        "Consider boosting with paid spend while momentum is still rising.",
-        "Consider resharing on brand channels to extend its reach.",
-        "Consider extending this creator's deal while they're hot.",
-        "Check usage rights before promoting further.",
-      ];
-    case "Worth watching":
-      return [
-        "Worth watching closely. If growth continues, boosting could pay off.",
-        "Consider resharing on brand channels now, at low risk.",
-      ];
-    case "Steady":
-    default:
-      return ["Nothing unusual yet. Keep watching along with the rest of this creator's posts."];
-  }
-}
-
 /** Sim time isn't wall-clock time, so freshness has to be phrased relative
  * to the most recent known sim_hours (current_sim_hours from the API),
  * never derived from Date.now(). */
@@ -212,11 +176,6 @@ export function isStale(latestSimHours: number | null, currentSimHours: number |
   return currentSimHours - latestSimHours >= STALE_THRESHOLD_HOURS;
 }
 
-/** The monitoring window runs for 7 sim-days (CLAUDE.md). "Day 3 of 7" is
- * grounded in the real sim_hours number but means something to a marketer
- * in a way a raw "hour 62" reading never does. */
-const MONITORING_WINDOW_DAYS = 7;
-
 /** "Tue 7 Jul 2026, 3:42 AM" from a reading's real timestamp. Uses the
  * timestamp stored on the sample itself, never a value derived from
  * sim_hours. */
@@ -232,11 +191,6 @@ export function formatMoment(isoTimestamp: string | null): string {
     hour: "numeric",
     minute: "2-digit",
   });
-}
-
-export function formatMonitoringProgress(simHours: number): string {
-  const day = Math.min(Math.floor(simHours / 24) + 1, MONITORING_WINDOW_DAYS);
-  return `Day ${day} of ${MONITORING_WINDOW_DAYS}`;
 }
 
 export function formatPublishedAt(publishedAt: string | null): string {
@@ -298,17 +252,10 @@ function capitalize(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-// ---------------------------------------------------------------------
-// AI teammate: pre-built questions with deterministic, evidence-grounded
-// answers. No LLM wired up yet — every answer here is built from the same
-// real fields the rest of the app already uses, phrased as a helpful
-// colleague would say it. When the LLM is added later, these become the
-// fallback path (docs/FRONTEND.md: the product must stay honest even if
-// the LLM is unavailable), not thrown away.
-// ---------------------------------------------------------------------
-
-/** Small evidence tags shown under an answer — "+408 in 30m", "14.1×
- * baseline", "3 elevated checks" — so a claim is never just asserted. */
+/** Small evidence tags shown under an AI teammate answer — "+408 in 30m",
+ * "14.1× baseline", "3 elevated checks" — so a claim is never just
+ * asserted. Fed to the AiPanel alongside the LLM's (or its deterministic
+ * fallback's) reply. */
 export function evidenceChips(evidence: EvidenceDetail | null): string[] {
   if (!evidence) return [];
   const chips: string[] = [];
@@ -325,99 +272,4 @@ export function evidenceChips(evidence: EvidenceDetail | null): string[] {
     chips.push(`${evidence.consecutive_qualifying_checks} elevated checks`);
   }
   return chips;
-}
-
-export function answerWhyStatus(post: Pick<PostDetail, "status_label" | "is_gone" | "evidence">): string {
-  return explainEvidence(post);
-}
-
-export function answerWhatChanged(post: Pick<PostDetail, "is_gone" | "evidence">): string {
-  if (post.is_gone) return "No new activity. This post is no longer live.";
-  if (!post.evidence) return "Not enough history yet to describe a recent change.";
-  return describeGain(post.evidence);
-}
-
-export function answerBaselineComparison(post: Pick<PostDetail, "is_gone" | "evidence">): string {
-  if (post.is_gone) return "Comparison isn't meaningful for a post that's no longer live.";
-  if (!post.evidence) return "Not enough history yet to compare its pace.";
-  return describeComparativePace(post.evidence);
-}
-
-export function answerAlertStatus(alertSent: boolean, isGone: boolean): string {
-  if (alertSent) return "Yes, an official breakout alert has been sent for this post.";
-  if (isGone) return "No alert was sent before this post became unavailable.";
-  return "No alert has been sent for this post yet.";
-}
-
-export function answerNextSteps(statusLabel: string, isGone: boolean): string {
-  return suggestedActions(statusLabel, isGone).join(" ");
-}
-
-export function answerWhatChangedSinceLastCheck(status: SystemStatus): string {
-  if (!status.most_notable_post) return "Nothing new to flag since the last check.";
-  const p = status.most_notable_post;
-  const caption = p.caption ? `, "${p.caption}",` : "";
-  return `@${p.creator_handle}${caption} is the most recently updated post worth flagging, now ${p.status_label.toLowerCase()}.`;
-}
-
-export function answerWhichPostsNeedAttention(home: HomeResponse): string {
-  const total = home.act_now.length + home.watch_closely.length;
-  if (total === 0) return "Nothing needs your attention right now.";
-  const parts: string[] = [];
-  if (home.act_now.length > 0) {
-    parts.push(`${home.act_now.length} taking off`);
-  }
-  if (home.watch_closely.length > 0) {
-    parts.push(`${home.watch_closely.length} worth watching`);
-  }
-  return `${capitalize(parts.join(" and "))} right now.`;
-}
-
-export function answerStrongestMomentum(home: HomeResponse): string {
-  const candidates = [...home.act_now, ...home.watch_closely];
-  if (candidates.length === 0) {
-    return "Nothing is currently outperforming what's normal for its creator.";
-  }
-  const strongest = candidates.reduce((best, post) => {
-    const ratio = post.evidence?.creator_pace_ratio ?? -Infinity;
-    const bestRatio = best.evidence?.creator_pace_ratio ?? -Infinity;
-    return ratio > bestRatio ? post : best;
-  });
-  const caption = strongest.caption ? `, "${strongest.caption}",` : "";
-  return `@${strongest.creator_handle}${caption} has the strongest current momentum.`;
-}
-
-export function answerRecentAlert(status: SystemStatus): string {
-  if (!status.most_recent_alert) return "No alerts have been sent yet.";
-  const a = status.most_recent_alert;
-  const caption = a.caption ? `, "${a.caption}",` : "";
-  return `An alert was sent for @${a.creator_handle}${caption}.`;
-}
-
-export function answerCreatorNeedsAttention(detail: CreatorDetailResponse): string {
-  const flagged = detail.active_posts.filter(
-    (p) => p.status_label === "Taking off" || p.status_label === "Worth watching",
-  );
-  if (flagged.length === 0) return "None of this creator's posts need attention right now.";
-  const takingOff = flagged.filter((p) => p.status_label === "Taking off").length;
-  const worthWatching = flagged.filter((p) => p.status_label === "Worth watching").length;
-  const parts: string[] = [];
-  if (takingOff > 0) parts.push(`${takingOff} taking off`);
-  if (worthWatching > 0) parts.push(`${worthWatching} worth watching`);
-  return `${capitalize(parts.join(" and "))}.`;
-}
-
-export function answerCreatorOutperforming(detail: CreatorDetailResponse): string {
-  const movers = detail.active_posts.filter((p) => p.evidence?.creator_pace_ratio != null);
-  if (movers.length === 0) return "Not enough history yet to compare this creator's current pace.";
-  const best = movers.reduce((top, post) => {
-    const ratio = post.evidence?.creator_pace_ratio ?? -Infinity;
-    const topRatio = top.evidence?.creator_pace_ratio ?? -Infinity;
-    return ratio > topRatio ? post : top;
-  });
-  const ratio = best.evidence?.creator_pace_ratio;
-  if (ratio == null || ratio < 1.15) {
-    return "Performing in line with what's normal for this creator right now.";
-  }
-  return `Yes. At least one post is running ${ratio.toFixed(1)}× faster than this creator's normal pace.`;
 }
