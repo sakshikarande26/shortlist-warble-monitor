@@ -64,6 +64,7 @@ class HomeResponse(BaseModel):
     # them as given, it never re-derives groupings from state client-side.
     act_now: list[HomePost]
     watch_closely: list[HomePost]
+    unavailable_posts: list[HomePost]  # deleted/taken-down, history preserved
     total_posts: int  # distinguishes "nothing tracked yet" from "nothing moving right now"
     unavailable_count: int
     current_sim_hours: float | None
@@ -111,6 +112,7 @@ class CreatorRosterEntry(BaseModel):
     taking_off_count: int
     worth_watching_count: int
     needs_attention_count: int  # = taking_off_count + worth_watching_count
+    unavailable_post_count: int
     strongest_post: CreatorRosterPost | None  # by current momentum, not lifetime views; null if none
     latest_sim_hours: float | None  # most recent check across this creator's active posts
 

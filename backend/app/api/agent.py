@@ -310,9 +310,58 @@ def _status_is_consistent(reply: str, facts: dict[str, Any]) -> bool:
 # --- Deterministic fallback -------------------------------------------
 
 
-def deterministic_answer(facts: dict[str, Any]) -> str:
+def _answer_movers(facts: dict[str, Any]) -> str:
+    movers = facts["top_movers"]
+    if not movers:
+        return "Nothing is moving above its creator's normal pace right now, so there's nothing to put first."
+    top = movers[0]
+    lead = f"@{top['creator_handle']} is the one to look at first, currently {top['status'].lower()}."
+    multiple = top.get("baseline_multiple")
+    if multiple is not None:
+        lead += f" It's running about {multiple}x its creator's usual pace."
+    if len(movers) > 1:
+        lead += f" {len(movers) - 1} other posts are also above their normal pace."
+    return lead
+
+
+def _answer_creators(facts: dict[str, Any]) -> str:
+    movers = facts["top_movers"]
+    if not movers:
+        return "No creator has a post outperforming their own normal pace at the moment."
+    handles = sorted({f"@{m['creator_handle']}" for m in movers})
+    return (
+        f"{', '.join(handles)} {'has' if len(handles) == 1 else 'have'} posts running above their "
+        f"usual pace right now. Everyone else is performing in their normal range."
+    )
+
+
+def _answer_alerts(facts: dict[str, Any]) -> str:
+    sent = [a for a in facts["alerts"] if a["submitted"]]
+    if not sent:
+        return "No alerts have been sent yet."
+    handles = ", ".join(f"@{a['creator_handle']}" for a in sent)
+    return (
+        f"{len(sent)} alert{'' if len(sent) == 1 else 's'} sent so far: {handles}. "
+        f"{len(facts['breakouts'])} posts have broken out in total, so some were detected in history "
+        f"rather than alerted live."
+    )
+
+
+def deterministic_answer(facts: dict[str, Any], message: str = "") -> str:
     """Used whenever the model is unavailable or its reply fails a
-    guardrail. Says only what the facts say, in the same calm register."""
+    guardrail. Says only what the facts say, in the same calm register.
+    Routed by question so the offline path still actually answers what was
+    asked rather than repeating one summary."""
+    asked = message.lower()
+
+    if not facts.get("selected_post"):
+        if "alert" in asked:
+            return _answer_alerts(facts)
+        if "creator" in asked or "performing" in asked:
+            return _answer_creators(facts)
+        if "attention" in asked or "first" in asked or "priorit" in asked:
+            return _answer_movers(facts)
+
     selected = facts.get("selected_post")
     if selected:
         parts = [f"@{selected['creator_handle']}'s post is currently {selected['status'].lower()}."]
@@ -415,7 +464,7 @@ async def agent_chat(request: ChatRequest, session: AsyncSession = Depends(get_d
         reply = None  # failed a guardrail: fall back rather than ship it
 
     if reply is None:
-        reply = deterministic_answer(facts)
+        reply = deterministic_answer(facts, request.message)
         llm_available = False
 
     history.append({"role": "user", "content": request.message})

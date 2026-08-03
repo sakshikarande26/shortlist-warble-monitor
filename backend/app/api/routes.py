@@ -356,9 +356,16 @@ async def get_home(session: AsyncSession = Depends(get_db)) -> HomeResponse:
     act_now = sorted(taking_off, key=pace, reverse=True)[:_SECTION_CAP]
     watch_closely = sorted(worth_watching, key=pace, reverse=True)[:_SECTION_CAP]
 
+    unavailable_posts = sorted(
+        (p for p in home_posts.values() if p.is_gone),
+        key=lambda p: p.latest_sim_hours or 0,
+        reverse=True,
+    )
+
     return HomeResponse(
         act_now=act_now,
         watch_closely=watch_closely,
+        unavailable_posts=unavailable_posts,
         total_posts=len(posts),
         unavailable_count=sum(1 for p in home_posts.values() if p.is_gone),
         current_sim_hours=await _current_sim_hours(session),
@@ -575,6 +582,7 @@ async def get_creators(session: AsyncSession = Depends(get_db)) -> CreatorsRespo
     for creator in creators:
         creator_posts = posts_by_creator.get(creator.id, [])
         active_posts = [p for p in creator_posts if p.status != "gone"]
+        unavailable_post_count = len(creator_posts) - len(active_posts)
         computations = _compute_posts(creator_posts, samples_by_post, followers_by_creator)
 
         taking_off_count = sum(1 for p in active_posts if computations[p.id].status_label == _TAKING_OFF)
@@ -626,6 +634,7 @@ async def get_creators(session: AsyncSession = Depends(get_db)) -> CreatorsRespo
                 taking_off_count=taking_off_count,
                 worth_watching_count=worth_watching_count,
                 needs_attention_count=taking_off_count + worth_watching_count,
+                unavailable_post_count=unavailable_post_count,
                 strongest_post=strongest_post,
                 latest_sim_hours=latest_sim_hours,
             )
