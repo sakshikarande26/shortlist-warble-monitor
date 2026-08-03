@@ -85,6 +85,7 @@ function DetailContent({ detail }: { detail: PostDetailType }) {
           isGone={detail.is_gone}
           goneSimHours={detail.gone_sim_hours}
           statusLabel={detail.status_label}
+          breakoutSimHours={detail.breakout_sim_hours}
         />
       </Surface>
 

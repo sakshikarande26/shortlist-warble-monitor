@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { ApiError, getCreatorDetail } from "../lib/api";
 import type { CreatorDetailResponse } from "../lib/types";
 import { formatFollowers, formatViews, getInitials } from "../lib/copy";
+import { useSelection } from "../lib/selection";
 import { CreatorPostRow } from "../components/CreatorPostRow";
 import { SkeletonCard, SkeletonLine } from "../components/states/Skeleton";
 import { EmptyState } from "../components/states/EmptyState";
@@ -18,6 +19,7 @@ type LoadState =
 export function CreatorDetail() {
   const { creatorId } = useParams<{ creatorId: string }>();
   const navigate = useNavigate();
+  const { setActiveCreator } = useSelection();
   const [state, setState] = useState<LoadState>({ status: "loading" });
 
   const load = useCallback(() => {
@@ -34,6 +36,15 @@ export function CreatorDetail() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Publishes the loaded creator into the shared selection so the right
+  // panel can answer questions about them. Clears on unmount.
+  useEffect(() => {
+    if (state.status === "ready") {
+      setActiveCreator(state.data);
+    }
+    return () => setActiveCreator(null);
+  }, [state, setActiveCreator]);
 
   return (
     <>

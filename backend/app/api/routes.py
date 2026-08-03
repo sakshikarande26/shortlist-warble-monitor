@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import (
     AlertSummary,
+    BreakoutLogEntry,
+    BreakoutLogResponse,
     CreatorContext,
     CreatorDetailResponse,
     CreatorPostSummary,
@@ -420,6 +422,47 @@ async def get_status(session: AsyncSession = Depends(get_db)) -> SystemStatus:
     )
 
 
+@router.get("/breakouts", response_model=BreakoutLogResponse)
+async def get_breakout_log(session: AsyncSession = Depends(get_db)) -> BreakoutLogResponse:
+    """The full history of confirmed breakout alerts for this monitoring
+    run. The run is a single bounded 7 sim-day window (CLAUDE.md) — "this
+    week's log" — not an indefinitely recurring wall-clock cycle, so there
+    is no real prior week to show as history yet.
+    """
+    creators = {c.id: c for c in (await session.execute(select(Creator))).scalars().all()}
+    posts = (await session.execute(select(Post))).scalars().all()
+    posts_by_id = {p.id: p for p in posts}
+    samples_by_post = await _samples_by_post(session, [p.id for p in posts])
+    followers_by_creator = {cid: c.followers for cid, c in creators.items()}
+    computations = _compute_posts(posts, samples_by_post, followers_by_creator)
+
+    alert_rows = (
+        await session.execute(select(Alert).order_by(Alert.decided_sim_hours.desc()))
+    ).scalars().all()
+
+    entries: list[BreakoutLogEntry] = []
+    for alert in alert_rows:
+        post = posts_by_id.get(alert.post_id)
+        creator = creators.get(post.creator_id) if post else None
+        comp = computations.get(alert.post_id)
+        entries.append(
+            BreakoutLogEntry(
+                post_id=alert.post_id,
+                creator_handle=creator.handle if creator else "unknown",
+                caption=post.caption if post else None,
+                status_label=comp.status_label if comp else "Unavailable",
+                decided_sim_hours=alert.decided_sim_hours,
+                submitted=alert.submitted,
+            )
+        )
+
+    return BreakoutLogResponse(
+        entries=entries,
+        window_start_sim_hours=0.0,
+        window_end_sim_hours=await _current_sim_hours(session),
+    )
+
+
 @router.get("/posts/{post_id}", response_model=PostDetail)
 async def get_post_detail(post_id: str, session: AsyncSession = Depends(get_db)) -> PostDetail:
     post = await session.get(Post, post_id)
@@ -448,6 +491,12 @@ async def get_post_detail(post_id: str, session: AsyncSession = Depends(get_db))
         await session.execute(select(Alert).where(Alert.post_id == post_id))
     ).scalar_one_or_none()
 
+    # When this post first reached BREAKOUT, if ever — for the chart marker.
+    # Full history (not just the latest state), same as "ever took off" on
+    # the creator detail page.
+    history = run_state_machine(comp.signals)
+    breakout_sim_hours = next((s.sim_hours for s in history if s.state == "BREAKOUT"), None)
+
     creator_context = CreatorContext(
         id=creator.id if creator else post.creator_id,
         handle=creator.handle if creator else "unknown",
@@ -472,6 +521,7 @@ async def get_post_detail(post_id: str, session: AsyncSession = Depends(get_db))
         reason=comp.reason,
         evidence=comp.evidence,
         alert_sent=alert_row is not None and alert_row.submitted,
+        breakout_sim_hours=breakout_sim_hours,
         current_sim_hours=await _current_sim_hours(session),
     )
 
@@ -494,14 +544,22 @@ async def get_creators(session: AsyncSession = Depends(get_db)) -> CreatorsRespo
         active_posts = [p for p in creator_posts if p.status != "gone"]
         computations = _compute_posts(creator_posts, samples_by_post, followers_by_creator)
 
-        needs_attention_count = sum(
-            1 for p in active_posts if computations[p.id].status_label in (_TAKING_OFF, _WORTH_WATCHING)
+        taking_off_count = sum(1 for p in active_posts if computations[p.id].status_label == _TAKING_OFF)
+        worth_watching_count = sum(
+            1 for p in active_posts if computations[p.id].status_label == _WORTH_WATCHING
         )
 
-        # "Strongest recent post" is current momentum, not lifetime views —
-        # ranked by comparative pace, never by absolute score. If nothing
-        # has a trustworthy comparative signal, there's honestly nothing to
-        # call out, rather than defaulting to an arbitrary pick.
+        latest_hours = [
+            computations[p.id].latest.sim_hours  # type: ignore[union-attr]
+            for p in active_posts
+            if computations[p.id].latest is not None
+        ]
+        latest_sim_hours = max(latest_hours) if latest_hours else None
+
+        # "Strongest current signal" is current momentum, not lifetime
+        # views — ranked by comparative pace, never by absolute score. If
+        # nothing has a trustworthy comparative signal, there's honestly
+        # nothing to call out, rather than defaulting to an arbitrary pick.
         movers = [
             p
             for p in active_posts
@@ -515,12 +573,15 @@ async def get_creators(session: AsyncSession = Depends(get_db)) -> CreatorsRespo
                 key=lambda p: computations[p.id].evidence.creator_pace_ratio,  # type: ignore[union-attr]
             )
             comp = computations[best.id]
+            sparkline = [p.views for p in _dedupe_samples(comp.sample_points)[-SPARKLINE_POINTS:]]
             strongest_post = CreatorRosterPost(
                 post_id=best.id,
                 caption=best.caption,
                 state=comp.state,
                 status_label=comp.status_label,
                 score=comp.score,
+                evidence=comp.evidence,
+                sparkline=sparkline,
             )
 
         entries.append(
@@ -529,13 +590,16 @@ async def get_creators(session: AsyncSession = Depends(get_db)) -> CreatorsRespo
                 handle=creator.handle,
                 followers=creator.followers,
                 active_post_count=len(active_posts),
-                needs_attention_count=needs_attention_count,
+                taking_off_count=taking_off_count,
+                worth_watching_count=worth_watching_count,
+                needs_attention_count=taking_off_count + worth_watching_count,
                 strongest_post=strongest_post,
+                latest_sim_hours=latest_sim_hours,
             )
         )
 
     entries.sort(key=lambda e: (e.needs_attention_count, e.followers), reverse=True)
-    return CreatorsResponse(creators=entries)
+    return CreatorsResponse(creators=entries, current_sim_hours=await _current_sim_hours(session))
 
 
 @router.get("/creators/{creator_id}", response_model=CreatorDetailResponse)

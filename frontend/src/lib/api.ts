@@ -1,4 +1,11 @@
-import type { CreatorDetailResponse, CreatorsResponse, HomeResponse, PostDetail, SystemStatus } from "./types";
+import type {
+  BreakoutLogResponse,
+  CreatorDetailResponse,
+  CreatorsResponse,
+  HomeResponse,
+  PostDetail,
+  SystemStatus,
+} from "./types";
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8001";
 
@@ -46,4 +53,8 @@ export function getCreatorDetail(creatorId: string): Promise<CreatorDetailRespon
 
 export function getStatus(): Promise<SystemStatus> {
   return request<SystemStatus>("/api/status");
+}
+
+export function getBreakoutLog(): Promise<BreakoutLogResponse> {
+  return request<BreakoutLogResponse>("/api/breakouts");
 }

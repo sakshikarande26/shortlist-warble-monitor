@@ -79,6 +79,7 @@ export interface PostDetail {
   reason: string;
   evidence: EvidenceDetail | null;
   alert_sent: boolean;
+  breakout_sim_hours: number | null;
   current_sim_hours: number | null;
 }
 
@@ -88,6 +89,8 @@ export interface CreatorRosterPost {
   state: PostState;
   status_label: string;
   score: number;
+  evidence: EvidenceDetail | null;
+  sparkline: number[];
 }
 
 export interface CreatorRosterEntry {
@@ -95,12 +98,16 @@ export interface CreatorRosterEntry {
   handle: string;
   followers: number;
   active_post_count: number;
+  taking_off_count: number;
+  worth_watching_count: number;
   needs_attention_count: number;
   strongest_post: CreatorRosterPost | null;
+  latest_sim_hours: number | null;
 }
 
 export interface CreatorsResponse {
   creators: CreatorRosterEntry[];
+  current_sim_hours: number | null;
 }
 
 export interface CreatorPostSummary {
@@ -150,4 +157,19 @@ export interface SystemStatus {
   last_checked_sim_hours: number | null;
   most_notable_post: NotablePost | null;
   most_recent_alert: AlertSummary | null;
+}
+
+export interface BreakoutLogEntry {
+  post_id: string;
+  creator_handle: string;
+  caption: string | null;
+  status_label: string;
+  decided_sim_hours: number;
+  submitted: boolean;
+}
+
+export interface BreakoutLogResponse {
+  entries: BreakoutLogEntry[];
+  window_start_sim_hours: number;
+  window_end_sim_hours: number | null;
 }

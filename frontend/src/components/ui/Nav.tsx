@@ -2,11 +2,13 @@ import { NavLink } from "react-router-dom";
 
 const NAV_ITEMS = [
   { label: "Home", to: "/" },
-  { label: "Creators", to: "/creators" },
+  { label: "Creator portfolio", to: "/creators" },
+  { label: "Breakout log", to: "/breakouts" },
 ];
 
 // Slim, calm sidebar — a hairline divider carries the separation from the
-// center column, not a heavy panel treatment.
+// center column, not a heavy panel treatment. The marketing agent chat is
+// opened from its own edge tab on the right (AppShell), not from here.
 export function Nav() {
   return (
     <nav className="flex w-[220px] shrink-0 flex-col border-r border-line px-6 py-10">
@@ -32,7 +34,7 @@ export function Nav() {
         ))}
       </div>
 
-      {/* This board is scoped to one connected platform — Warble — the way
+      {/* This board is scoped to one connected platform, Warble, the way
           other tools in the account might connect Instagram or TikTok
           instead. A small badge, not a switcher, since only Warble exists
           today. */}

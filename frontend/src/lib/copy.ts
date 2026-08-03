@@ -10,7 +10,14 @@
 // use the same value), and a second frontend-side mapping is exactly how a
 // section header and a card's own badge end up disagreeing.
 
-import type { EvidenceDetail, HomePost, HomeResponse, PostDetail, SystemStatus } from "./types";
+import type {
+  CreatorDetailResponse,
+  EvidenceDetail,
+  HomePost,
+  HomeResponse,
+  PostDetail,
+  SystemStatus,
+} from "./types";
 
 /** One meaningful, honest statement per card, grounded in this post's own
  * evidence numbers — how much it gained, over what window, and how that
@@ -21,14 +28,14 @@ export function performanceStatement(
   post: Pick<HomePost, "is_gone" | "status_label" | "evidence">,
 ): string {
   if (post.is_gone) {
-    return "No longer available — history is preserved below.";
+    return "No longer available. History is preserved below.";
   }
   const evidence = post.evidence;
   if (!evidence) {
     return "Not enough history yet to say how this is performing.";
   }
   if (post.status_label === "Steady") {
-    return "No unusual movement — performing about as expected.";
+    return "No unusual movement. Performing about as expected.";
   }
 
   return `${describeGain(evidence)}. ${describeComparativePace(evidence)}`;
@@ -64,7 +71,7 @@ export function explainEvidence(detail: Pick<PostDetail, "status_label" | "is_go
     return "Not enough history yet to explain this post's trajectory.";
   }
   if (detail.status_label === "Steady") {
-    return "No unusual growth has shown up yet — the latest check was in line with a normal, steady pace.";
+    return "No unusual growth has shown up yet. The latest check was in line with a normal, steady pace.";
   }
 
   const streak = describeStreak(evidence.consecutive_qualifying_checks);
@@ -130,12 +137,12 @@ export function suggestedActions(statusLabel: string, isGone: boolean): string[]
       ];
     case "Worth watching":
       return [
-        "Worth watching closely — if growth continues, boosting could pay off.",
+        "Worth watching closely. If growth continues, boosting could pay off.",
         "Consider resharing on brand channels now, at low risk.",
       ];
     case "Steady":
     default:
-      return ["Nothing unusual yet — keep watching along with the rest of this creator's posts."];
+      return ["Nothing unusual yet. Keep watching along with the rest of this creator's posts."];
   }
 }
 
@@ -149,14 +156,31 @@ export function formatRelativeSimTime(
   if (latestSimHours === null) return "No updates yet";
   if (currentSimHours === null) return "Updated recently";
   const delta = currentSimHours - latestSimHours;
-  if (delta < 0.05) return "Updated moments ago";
-  if (delta < 1) return "Updated less than an hour ago";
-  if (delta < 24) {
-    const hours = Math.round(delta);
-    return `Updated ${hours} hour${hours === 1 ? "" : "s"} ago`;
+  if (delta < 1 / 60) return "Updated moments ago";
+
+  if (delta < 1) {
+    const minutes = Math.min(Math.round(delta * 60), 59);
+    return `Updated ${minutes} min${minutes === 1 ? "" : "s"} ago`;
   }
-  const days = Math.round(delta / 24);
-  return `Updated ${days} day${days === 1 ? "" : "s"} ago`;
+
+  if (delta < 24) {
+    let hours = Math.floor(delta);
+    let minutes = Math.round((delta - hours) * 60);
+    if (minutes === 60) {
+      hours += 1;
+      minutes = 0;
+    }
+    if (minutes === 0) return `Updated ${hours} hour${hours === 1 ? "" : "s"} ago`;
+    return `Updated ${hours} hour${hours === 1 ? "" : "s"} ${minutes} min${minutes === 1 ? "" : "s"} ago`;
+  }
+
+  if (delta < 24 * 30) {
+    const days = Math.round(delta / 24);
+    return `Updated ${days} day${days === 1 ? "" : "s"} ago`;
+  }
+
+  const months = Math.round(delta / (24 * 30));
+  return `Updated ${months} month${months === 1 ? "" : "s"} ago`;
 }
 
 /** 6 hours matches the collector's own discovery-sweep cadence (CLAUDE.md)
@@ -207,7 +231,7 @@ export function formatViews(views: number): string {
  * never invented (docs/FRONTEND.md: "built from REAL state"). */
 export function buildBriefing(actNowCount: number, watchCount: number, unavailableCount: number): string {
   if (actNowCount === 0 && watchCount === 0 && unavailableCount === 0) {
-    return "Nothing unusual right now — everything is performing steadily.";
+    return "Nothing unusual right now. Everything is performing steadily.";
   }
 
   const parts: string[] = [];
@@ -224,7 +248,7 @@ export function buildBriefing(actNowCount: number, watchCount: number, unavailab
   }
 
   if (parts.length === 0) {
-    return "Nothing unusual right now — everything is performing steadily.";
+    return "Nothing unusual right now. Everything is performing steadily.";
   }
   if (parts.length === 1) {
     return `${capitalize(parts[0])}.`;
@@ -272,7 +296,7 @@ export function answerWhyStatus(post: Pick<PostDetail, "status_label" | "is_gone
 }
 
 export function answerWhatChanged(post: Pick<PostDetail, "is_gone" | "evidence">): string {
-  if (post.is_gone) return "No new activity — this post is no longer live.";
+  if (post.is_gone) return "No new activity. This post is no longer live.";
   if (!post.evidence) return "Not enough history yet to describe a recent change.";
   return describeGain(post.evidence);
 }
@@ -284,7 +308,7 @@ export function answerBaselineComparison(post: Pick<PostDetail, "is_gone" | "evi
 }
 
 export function answerAlertStatus(alertSent: boolean, isGone: boolean): string {
-  if (alertSent) return "Yes — an official breakout alert has been sent for this post.";
+  if (alertSent) return "Yes, an official breakout alert has been sent for this post.";
   if (isGone) return "No alert was sent before this post became unavailable.";
   return "No alert has been sent for this post yet.";
 }
@@ -296,7 +320,7 @@ export function answerNextSteps(statusLabel: string, isGone: boolean): string {
 export function answerWhatChangedSinceLastCheck(status: SystemStatus): string {
   if (!status.most_notable_post) return "Nothing new to flag since the last check.";
   const p = status.most_notable_post;
-  const caption = p.caption ? ` — "${p.caption}"` : "";
+  const caption = p.caption ? `, "${p.caption}",` : "";
   return `@${p.creator_handle}${caption} is the most recently updated post worth flagging, now ${p.status_label.toLowerCase()}.`;
 }
 
@@ -323,13 +347,41 @@ export function answerStrongestMomentum(home: HomeResponse): string {
     const bestRatio = best.evidence?.creator_pace_ratio ?? -Infinity;
     return ratio > bestRatio ? post : best;
   });
-  const caption = strongest.caption ? ` — "${strongest.caption}"` : "";
+  const caption = strongest.caption ? `, "${strongest.caption}",` : "";
   return `@${strongest.creator_handle}${caption} has the strongest current momentum.`;
 }
 
 export function answerRecentAlert(status: SystemStatus): string {
   if (!status.most_recent_alert) return "No alerts have been sent yet.";
   const a = status.most_recent_alert;
-  const caption = a.caption ? ` — "${a.caption}"` : "";
+  const caption = a.caption ? `, "${a.caption}",` : "";
   return `An alert was sent for @${a.creator_handle}${caption}.`;
+}
+
+export function answerCreatorNeedsAttention(detail: CreatorDetailResponse): string {
+  const flagged = detail.active_posts.filter(
+    (p) => p.status_label === "Taking off" || p.status_label === "Worth watching",
+  );
+  if (flagged.length === 0) return "None of this creator's posts need attention right now.";
+  const takingOff = flagged.filter((p) => p.status_label === "Taking off").length;
+  const worthWatching = flagged.filter((p) => p.status_label === "Worth watching").length;
+  const parts: string[] = [];
+  if (takingOff > 0) parts.push(`${takingOff} taking off`);
+  if (worthWatching > 0) parts.push(`${worthWatching} worth watching`);
+  return `${capitalize(parts.join(" and "))}.`;
+}
+
+export function answerCreatorOutperforming(detail: CreatorDetailResponse): string {
+  const movers = detail.active_posts.filter((p) => p.evidence?.creator_pace_ratio != null);
+  if (movers.length === 0) return "Not enough history yet to compare this creator's current pace.";
+  const best = movers.reduce((top, post) => {
+    const ratio = post.evidence?.creator_pace_ratio ?? -Infinity;
+    const topRatio = top.evidence?.creator_pace_ratio ?? -Infinity;
+    return ratio > topRatio ? post : top;
+  });
+  const ratio = best.evidence?.creator_pace_ratio;
+  if (ratio == null || ratio < 1.15) {
+    return "Performing in line with what's normal for this creator right now.";
+  }
+  return `Yes. At least one post is running ${ratio.toFixed(1)}× faster than this creator's normal pace.`;
 }

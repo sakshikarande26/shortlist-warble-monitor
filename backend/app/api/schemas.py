@@ -89,6 +89,7 @@ class PostDetail(BaseModel):
     reason: str
     evidence: EvidenceDetail | None
     alert_sent: bool  # whether an official alert was ever submitted for this post
+    breakout_sim_hours: float | None  # when this post first reached BREAKOUT, if ever
     current_sim_hours: float | None
 
 
@@ -98,6 +99,8 @@ class CreatorRosterPost(BaseModel):
     state: PostState
     status_label: str
     score: float
+    evidence: EvidenceDetail | None  # grounds "why it's strongest": gain, window, baseline comparison
+    sparkline: list[int]
 
 
 class CreatorRosterEntry(BaseModel):
@@ -105,12 +108,16 @@ class CreatorRosterEntry(BaseModel):
     handle: str
     followers: int
     active_post_count: int
-    needs_attention_count: int
+    taking_off_count: int
+    worth_watching_count: int
+    needs_attention_count: int  # = taking_off_count + worth_watching_count
     strongest_post: CreatorRosterPost | None  # by current momentum, not lifetime views; null if none
+    latest_sim_hours: float | None  # most recent check across this creator's active posts
 
 
 class CreatorsResponse(BaseModel):
     creators: list[CreatorRosterEntry]
+    current_sim_hours: float | None
 
 
 class CreatorPostSummary(BaseModel):
@@ -163,3 +170,23 @@ class SystemStatus(BaseModel):
     last_checked_sim_hours: float | None
     most_notable_post: NotablePost | None  # most recently-updated Taking off / Worth watching post
     most_recent_alert: AlertSummary | None
+
+
+class BreakoutLogEntry(BaseModel):
+    post_id: str
+    creator_handle: str
+    caption: str | None
+    status_label: str  # current status — may have cooled since the alert was decided
+    decided_sim_hours: float
+    submitted: bool
+
+
+class BreakoutLogResponse(BaseModel):
+    """The monitoring run is a single bounded 7 sim-day window (CLAUDE.md),
+    which is honestly "one week" of monitoring — not a real, indefinitely
+    recurring wall-clock cycle. `entries` covers that whole window; there's
+    no persisted concept of a prior run to show as history yet."""
+
+    entries: list[BreakoutLogEntry]
+    window_start_sim_hours: float
+    window_end_sim_hours: float | None

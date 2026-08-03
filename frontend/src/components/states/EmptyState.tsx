@@ -15,7 +15,7 @@ export function EmptyState({ title, message, action }: EmptyStateProps) {
       {action && (
         <Link
           to={action.to}
-          className="mt-4 inline-flex rounded-full bg-black/[0.05] px-4 py-1.5 text-sm text-ink transition-colors duration-150 hover:bg-black/[0.08]"
+          className="mt-4 inline-flex rounded-full bg-accent px-4 py-1.5 text-sm font-medium text-white transition-colors duration-150 hover:bg-accent/90"
         >
           {action.label}
         </Link>

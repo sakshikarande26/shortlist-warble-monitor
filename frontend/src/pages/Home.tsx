@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { ApiError, getHome } from "../lib/api";
-import type { HomeResponse } from "../lib/types";
+import { Link } from "react-router-dom";
+import { ApiError, getHome, getStatus } from "../lib/api";
+import type { HomeResponse, SystemStatus } from "../lib/types";
 import { Briefing } from "../components/Briefing";
 import { TriageSection } from "../components/TriageSection";
 import { WhileAwaySection } from "../components/WhileAwaySection";
@@ -9,19 +10,20 @@ import { EmptyState } from "../components/states/EmptyState";
 import { ErrorState } from "../components/states/ErrorState";
 import { StatStrip } from "../components/ui/StatStrip";
 import { getLastVisitSimHours, setLastVisitSimHours } from "../lib/lastVisit";
+import { formatRelativeSimTime } from "../lib/copy";
 
 type LoadState =
   | { status: "loading" }
   | { status: "error"; message: string }
-  | { status: "ready"; data: HomeResponse };
+  | { status: "ready"; data: HomeResponse; status_: SystemStatus };
 
 export function Home() {
   const [state, setState] = useState<LoadState>({ status: "loading" });
 
   const load = useCallback(() => {
     setState({ status: "loading" });
-    getHome()
-      .then((data) => setState({ status: "ready", data }))
+    Promise.all([getHome(), getStatus()])
+      .then(([data, status_]) => setState({ status: "ready", data, status_ }))
       .catch((error: unknown) => {
         const message = error instanceof ApiError ? error.message : "Couldn't load the briefing.";
         setState({ status: "error", message });
@@ -36,7 +38,7 @@ export function Home() {
     <>
       {state.status === "loading" && <HomeSkeleton />}
       {state.status === "error" && <ErrorState message={state.message} onRetry={load} />}
-      {state.status === "ready" && <HomeContent data={state.data} />}
+      {state.status === "ready" && <HomeContent data={state.data} status={state.status_} />}
     </>
   );
 }
@@ -46,7 +48,7 @@ export function Home() {
 // comparative-to-creator ranking — this page just renders what it's given,
 // it doesn't re-derive groupings from state client-side (that was the old
 // bug: a section's header and its cards' labels could disagree).
-function HomeContent({ data }: { data: HomeResponse }) {
+function HomeContent({ data, status }: { data: HomeResponse; status: SystemStatus }) {
   const { act_now, watch_closely, total_posts, unavailable_count, current_sim_hours } = data;
 
   // Which act_now posts became notable since the marketer's last visit —
@@ -111,7 +113,9 @@ function HomeContent({ data }: { data: HomeResponse }) {
       <WhileAwaySection posts={whileAwayPosts} />
       <TriageSection
         title="Act now"
-        emptyMessage="Nothing is taking off right now"
+        emptyMessage="All quiet on the breakout front"
+        emptyDetail="Nothing is taking off right now, but we're still watching closely."
+        emptyExtra={<LastBreakoutInsight status={status} currentSimHours={current_sim_hours} />}
         posts={act_now}
         currentSimHours={current_sim_hours}
       />
@@ -122,6 +126,33 @@ function HomeContent({ data }: { data: HomeResponse }) {
         currentSimHours={current_sim_hours}
       />
     </div>
+  );
+}
+
+// When there's nothing to triage right now, surface the last real
+// breakout instead of leaving a flat empty box — a genuine data point
+// (from the Alert table), not a fabricated "nothing ever happens" message.
+function LastBreakoutInsight({
+  status,
+  currentSimHours,
+}: {
+  status: SystemStatus;
+  currentSimHours: number | null;
+}) {
+  if (!status.most_recent_alert) return null;
+  const alert = status.most_recent_alert;
+  return (
+    <Link
+      to={`/posts/${alert.post_id}`}
+      className="block rounded-xl border border-line bg-white/40 px-4 py-3 text-sm transition-colors hover:bg-black/[0.02]"
+    >
+      <span className="text-ink-muted">Last confirmed breakout: </span>
+      <span className="font-medium text-ink">@{alert.creator_handle}</span>
+      {alert.caption && <span className="text-ink-muted">, "{alert.caption}",</span>}
+      <span className="ml-1 text-ink-muted">
+        ({formatRelativeSimTime(alert.sim_hours, currentSimHours)})
+      </span>
+    </Link>
   );
 }
 

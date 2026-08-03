@@ -5,6 +5,7 @@ import { Home } from "./pages/Home";
 import { Creators } from "./pages/Creators";
 import { CreatorDetail } from "./pages/CreatorDetail";
 import { PostDetail } from "./pages/PostDetail";
+import { BreakoutLog } from "./pages/BreakoutLog";
 
 function App() {
   return (
@@ -16,6 +17,7 @@ function App() {
             <Route path="/creators" element={<Creators />} />
             <Route path="/creators/:creatorId" element={<CreatorDetail />} />
             <Route path="/posts/:postId" element={<PostDetail />} />
+            <Route path="/breakouts" element={<BreakoutLog />} />
           </Route>
         </Routes>
       </BrowserRouter>
