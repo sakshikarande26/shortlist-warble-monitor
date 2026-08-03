@@ -4,7 +4,7 @@
 
 **Content breakout detection for brand-creator programs on social media**
 
-Built by for the Shortlist AI Product Engineering 
+(Built for the Shortlist AI Product Engineering) 
 
 </div>
 
