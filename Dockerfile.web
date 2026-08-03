@@ -1,18 +1,29 @@
-FROM python:3.13-slim
+# Web service: FastAPI serving the read-only API plus the built frontend
+# from one origin. The collector runs as a separate service from the other
+# Dockerfile — the two must not share a process.
 
-# install uv (official standalone binary)
+# --- Stage 1: build the frontend ---------------------------------------
+FROM node:22-slim AS frontend
+WORKDIR /build
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+# Same-origin in production: the API lives under /api on this very host,
+# so the client needs no absolute base URL.
+ENV VITE_API_BASE_URL=""
+RUN npm run build
+
+# --- Stage 2: the API image --------------------------------------------
+FROM python:3.13-slim
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 WORKDIR /app/backend
-
-# copy dependency files first (better layer caching)
 COPY backend/pyproject.toml backend/uv.lock ./
-
-# install deps into the image
 RUN uv sync --frozen --no-dev
-
-# copy the rest of the backend
 COPY backend/ ./
 
-# run migrations, then serve the API on Railway's assigned port
-CMD ["sh", "-c", "uv run alembic upgrade head && uv run uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8001}"]
+COPY --from=frontend /build/dist /app/frontend_dist
+
+ENV FRONTEND_DIST_DIR=/app/frontend_dist
+# Railway injects $PORT; bind it, and 0.0.0.0 so the container is reachable.
+CMD ["sh", "-c", "uv run uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
