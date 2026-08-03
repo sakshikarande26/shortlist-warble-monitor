@@ -49,15 +49,16 @@ body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   min-height: 100vh;
-  /* Soft mesh: pale blue top-left, pale violet center, pale pink lower
-     right, pastel enough that translucent cards stay clearly readable on
-     top. */
+  /* Mesh: saturated blue top-left, violet upper-right, pink lower-left,
+     blue lower-right, deliberately more contrasting than a flat pastel wash
+     so the translucent cards read as floating glass rather than blending
+     into the page. */
   background-color: #f4f2fb;
   background-image:
-    radial-gradient(circle at 12% 8%, rgb(180 200 255 / 45%), transparent 45%),
-    radial-gradient(circle at 82% 12%, rgb(210 180 255 / 40%), transparent 50%),
-    radial-gradient(circle at 25% 85%, rgb(255 200 220 / 40%), transparent 50%),
-    radial-gradient(circle at 88% 80%, rgb(190 210 255 / 35%), transparent 50%);
+    radial-gradient(circle at 12% 8%, rgb(120 160 255 / 65%), transparent 45%),
+    radial-gradient(circle at 82% 12%, rgb(180 120 255 / 60%), transparent 50%),
+    radial-gradient(circle at 25% 85%, rgb(255 130 170 / 55%), transparent 50%),
+    radial-gradient(circle at 88% 80%, rgb(110 150 255 / 55%), transparent 50%);
   background-attachment: fixed;
 }
 

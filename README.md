@@ -18,7 +18,7 @@ continuously, decides what counts as real momentum vs. a good afternoon,
 and pages the brand only when it's worth it.
 
 The hard part was never "poll an API on a timer." It's deciding, from
-sparse samples, what's signal — and being able to defend that call later.
+sparse samples, what's signal, and being able to defend that call later.
 
 ---
 
@@ -31,8 +31,8 @@ Collector  →  Supabase  →  Detector  →  Alerter  →  Read API  →  Front
 
 | Piece | Job |
 |---|---|
-| **Collector** | Polls Warble on a schedule — discovery every ~6h, live metrics every 15min. Stays under the 250 req/hr limit. Runs 24/7 on Railway. Every reading is appended, never overwritten. |
-| **Detector** | Stateless — recomputes a post's status from its full history every time. Requires *sustained* acceleration across multiple checks, not one spike. Qualifies on absolute gain OR relative growth, not both. |
+| **Collector** | Polls Warble on a schedule: discovery every ~6h, live metrics every 15min. Stays under the 250 req/hr limit. Runs 24/7 on Railway. Every reading is appended, never overwritten. |
+| **Detector** | Stateless: recomputes a post's status from its full history every time. Requires *sustained* acceleration across multiple checks, not one spike. Qualifies on absolute gain OR relative growth, not both. |
 | **Alerter** | Fires `POST /v1/alerts` only on a confirmed breakout, deduped so nothing pages twice. |
 | **Read API + Frontend** | Sit on top, display what the detector already decided. Never touch detection logic directly. |
 
@@ -46,7 +46,7 @@ backend/
     ├── collector/
     │   └── loop.py       # the 24/7 polling scheduler
     ├── detector/
-    │   ├── momentum.py   # velocity, acceleration — the core scoring math
+    │   ├── momentum.py   # velocity, acceleration: the core scoring math
     │   ├── evaluate.py   # runs the state machine on a post's samples
     │   └── config.py     # every tunable threshold, in one place
     ├── alerts/
@@ -95,11 +95,11 @@ npm run dev
 
 A post has to accelerate, and hold that acceleration across two
 consecutive checks, before it counts as a breakout. One good reading
-isn't enough — plenty of posts spike and fade.
+isn't enough; plenty of posts spike and fade.
 
 Two different bars, on purpose:
 
-- **Official alerts** use the strict, confirmed rule — a false alert
+- **Official alerts** use the strict, confirmed rule: a false alert
   costs more trust than a slightly late one.
 - **The in-app attention queue** ranks by momentum *relative to a
   creator's usual pace*, so there's always something worth looking at,
@@ -121,7 +121,7 @@ by hand, check the number against what actually happened.
 2. **Relative-growth thresholds don't scale.** Requiring both a minimum
    absolute gain *and* a minimum percentage per check works at 10K
    views. At 1M views, adding 40K is a real breakout but only ~4%
-   growth — it silently failed. Fixed by qualifying on absolute gain OR
+   growth, so it silently failed. Fixed by qualifying on absolute gain OR
    relative growth, not both.
 
 **The lesson:** a detector that passes its own tests can still be
@@ -130,44 +130,25 @@ something real, by hand, before trusting it.
 
 ---
 
-## What I'd have done differently
-
-I activated the API key a bit early — right after one or two manual
-checks to confirm response shapes, before the detector logic was fully
-correct. Because of that, a handful of the earliest and biggest
-breakouts happened before my fixes landed. They're in my stored data,
-but were never sent live to `POST /v1/alerts`.
-
-I chose **not** to backfill those. A batch of hours-late alerts would
-misrepresent how fast the system actually catches things more than an
-honest gap does. Everything after the fix is caught live, with accurate
-timing.
-
-If I did this again: finish validating detection logic against a small
-synthetic dataset *before* starting the clock.
-
----
-
 ## What I optimized for
 
 - Getting detection right, over shipping fast
-- A trustworthy, auditable system — deterministic code decides, the LLM
+- A trustworthy, auditable system: deterministic code decides, the LLM
   only explains, every AI claim traces to a real number or gets thrown out
 - One tight product slice over a broad platform
 
 ## What I skipped on purpose
 
-- Backfilling early alerts (above)
-- A full posts/creators browsing app — kept to home, post detail,
+- A full posts/creators browsing app: kept to home, post detail,
   creators, and breakout history
-- Any comparison/reporting surface — not what someone checking twice a
+- Any comparison/reporting surface: not what someone checking twice a
   day needs first
 
 ---
 
 ## Debugging and UX decisions
 
-Early on, the UI leaned on backend concepts — snapshot counts, raw
+Early on, the UI leaned on backend concepts: snapshot counts, raw
 scores. Rewrote it into marketer language: "taking off," "worth
 watching," "not enough history yet." The rule: if a label wouldn't make
 sense to someone who's never seen the code, it doesn't belong in the UI.
@@ -180,7 +161,7 @@ if that regresses.
 
 ## What marketers need vs. what this gives them
 
-A marketer managing 40+ creators doesn't want a dashboard — they want to
+A marketer managing 40+ creators doesn't want a dashboard; they want to
 be told what changed and what to do about it. Home opens with a
 plain-language briefing, not a KPI grid. Post detail answers "should I
 act on this" in order: status → real growth chart → why it matters →
@@ -188,15 +169,15 @@ a suggested next step, framed as a consideration, never an instruction.
 
 ---
 
-## The LLM feature — marketing agent
+## The LLM feature: marketing agent
 
 A chat-style agent in the side panel. It only sees numbers already
-computed — no DB access, no tools — so it can explain what's happening
+computed, with no DB access and no tools, so it can explain what's happening
 but can't invent a stat or override the detector's decision.
 
 **Guardrails:** every number in a reply has to trace back to the facts
 object given to it, or the reply is thrown out and replaced with a
-plain-text summary. Same fallback on API failure or missing key — the
+plain-text summary. Same fallback on API failure or missing key: the
 product stays usable, just quieter. Session memory persists per
 conversation until the user ends the chat.
 
@@ -221,7 +202,7 @@ before asking Claude Code to fix them.
 
 | Concern | At 40 creators | At scale |
 |---|---|---|
-| Rate limits | Comfortable under 250/hr | Needs tiered polling — fast-moving posts checked more often |
+| Rate limits | Comfortable under 250/hr | Needs tiered polling: fast-moving posts checked more often |
 | Detector cost | Cheap to recompute full history | Cache last state, compute deltas instead of replaying everything |
 | Agent memory | In-process, fine for one instance | Move to Redis/DB for multiple replicas |
 | Alert dedup | Single collector, in-memory set | Needs a distributed lock or single source of truth |
@@ -230,7 +211,7 @@ before asking Claude Code to fix them.
 
 ## What I learned
 
-A detector that passes its own tests can still be silently wrong — the
+A detector that passes its own tests can still be silently wrong; the
 only fix is checking it against real data by hand. I'm also more
 convinced the deterministic/AI split is the right shape here: AI is
 more useful, and safer, explaining a decision than making one.
@@ -239,7 +220,7 @@ more useful, and safer, explaining a decision than making one.
 
 ## Known limitations
 
-- Agent session memory is in-process — clears on redeploy/restart
+- Agent session memory is in-process, clears on redeploy/restart
 - Relative-ranking calibration hasn't been tuned against a full 7-day
   dataset, since the window's still open
 
