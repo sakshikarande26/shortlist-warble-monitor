@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ApiError, getPostDetail } from "../lib/api";
 import type { PostDetail as PostDetailType } from "../lib/types";
-import { formatPublishedAt } from "../lib/copy";
+import { creatorInsight, explainEvidence, formatPublishedAt } from "../lib/copy";
 import { useSelection } from "../lib/selection";
 import { StatusSummary } from "../components/StatusSummary";
 import { GrowthChart } from "../components/GrowthChart";
@@ -88,6 +88,16 @@ function DetailContent({ detail }: { detail: PostDetailType }) {
           breakoutSimHours={detail.breakout_sim_hours}
         />
       </Surface>
+
+      <section>
+        <h2 className="mb-3 text-[15px] font-medium text-ink">How this post has behaved</h2>
+        <Surface className="p-5">
+          <p className="text-sm text-ink-muted">{explainEvidence(detail)}</p>
+          <p className="mt-3 border-t border-line pt-3 text-sm text-ink-muted">
+            {creatorInsight(detail)}
+          </p>
+        </Surface>
+      </section>
 
       <CreatorContext creator={detail.creator} />
     </div>

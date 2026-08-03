@@ -424,43 +424,76 @@ async def get_status(session: AsyncSession = Depends(get_db)) -> SystemStatus:
 
 @router.get("/breakouts", response_model=BreakoutLogResponse)
 async def get_breakout_log(session: AsyncSession = Depends(get_db)) -> BreakoutLogResponse:
-    """The full history of confirmed breakout alerts for this monitoring
-    run. The run is a single bounded 7 sim-day window (CLAUDE.md) — "this
-    week's log" — not an indefinitely recurring wall-clock cycle, so there
-    is no real prior week to show as history yet.
+    """Every post that reached BREAKOUT at any point, found by replaying the
+    current detector over each post's full stored sample history. Entirely
+    derived from stored samples — the alerts table is consulted only to
+    mark which of these were officially submitted at the time, never to
+    decide membership. A post can therefore appear here without an alert:
+    it broke out under logic that wasn't deployed yet when it happened.
     """
     creators = {c.id: c for c in (await session.execute(select(Creator))).scalars().all()}
     posts = (await session.execute(select(Post))).scalars().all()
-    posts_by_id = {p.id: p for p in posts}
     samples_by_post = await _samples_by_post(session, [p.id for p in posts])
     followers_by_creator = {cid: c.followers for cid, c in creators.items()}
     computations = _compute_posts(posts, samples_by_post, followers_by_creator)
 
-    alert_rows = (
-        await session.execute(select(Alert).order_by(Alert.decided_sim_hours.desc()))
-    ).scalars().all()
+    submitted_ids = {
+        row.post_id
+        for row in (
+            await session.execute(select(Alert).where(Alert.submitted.is_(True)))
+        ).scalars().all()
+    }
 
     entries: list[BreakoutLogEntry] = []
-    for alert in alert_rows:
-        post = posts_by_id.get(alert.post_id)
-        creator = creators.get(post.creator_id) if post else None
-        comp = computations.get(alert.post_id)
+    for post in posts:
+        comp = computations[post.id]
+        history = run_state_machine(comp.signals)
+        first_breakout = next((s for s in history if s.state == "BREAKOUT"), None)
+        if first_breakout is None:
+            continue
+
+        points = _dedupe_samples(comp.sample_points)
+        if not points:
+            continue
+        # First reading at or after the breakout moment; the signal's
+        # sim_hours is the later sample of its interval, so this normally
+        # lands exactly on it.
+        views_at_breakout = next(
+            (p.views for p in points if p.sim_hours >= first_breakout.sim_hours),
+            points[-1].views,
+        )
+        peak_views = max(p.views for p in points)
+        growth_multiple = peak_views / views_at_breakout if views_at_breakout > 0 else None
+
+        # The real timestamp of the breakout reading, read straight off the
+        # stored sample rather than derived from sim_hours.
+        breakout_sample = next(
+            (
+                s
+                for s in sorted(samples_by_post.get(post.id, []), key=lambda s: s.sim_hours)
+                if s.sim_hours >= first_breakout.sim_hours
+            ),
+            None,
+        )
+
+        creator = creators.get(post.creator_id)
         entries.append(
             BreakoutLogEntry(
-                post_id=alert.post_id,
+                post_id=post.id,
                 creator_handle=creator.handle if creator else "unknown",
-                caption=post.caption if post else None,
-                status_label=comp.status_label if comp else "Unavailable",
-                decided_sim_hours=alert.decided_sim_hours,
-                submitted=alert.submitted,
+                caption=post.caption,
+                breakout_sim_hours=first_breakout.sim_hours,
+                breakout_at=breakout_sample.metrics_at if breakout_sample else None,
+                views_at_breakout=views_at_breakout,
+                peak_views=peak_views,
+                growth_multiple=growth_multiple,
+                current_status_label=comp.status_label,
+                alert_submitted=post.id in submitted_ids,
             )
         )
 
-    return BreakoutLogResponse(
-        entries=entries,
-        window_start_sim_hours=0.0,
-        window_end_sim_hours=await _current_sim_hours(session),
-    )
+    entries.sort(key=lambda e: e.breakout_sim_hours, reverse=True)
+    return BreakoutLogResponse(entries=entries, current_sim_hours=await _current_sim_hours(session))
 
 
 @router.get("/posts/{post_id}", response_model=PostDetail)

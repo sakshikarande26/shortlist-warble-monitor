@@ -163,13 +163,16 @@ export interface BreakoutLogEntry {
   post_id: string;
   creator_handle: string;
   caption: string | null;
-  status_label: string;
-  decided_sim_hours: number;
-  submitted: boolean;
+  breakout_sim_hours: number;
+  breakout_at: string | null;
+  views_at_breakout: number;
+  peak_views: number;
+  growth_multiple: number | null;
+  current_status_label: string;
+  alert_submitted: boolean;
 }
 
 export interface BreakoutLogResponse {
   entries: BreakoutLogEntry[];
-  window_start_sim_hours: number;
-  window_end_sim_hours: number | null;
+  current_sim_hours: number | null;
 }

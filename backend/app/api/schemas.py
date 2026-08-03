@@ -176,17 +176,15 @@ class BreakoutLogEntry(BaseModel):
     post_id: str
     creator_handle: str
     caption: str | None
-    status_label: str  # current status — may have cooled since the alert was decided
-    decided_sim_hours: float
-    submitted: bool
+    breakout_sim_hours: float  # when it FIRST reached BREAKOUT on replay
+    breakout_at: str | None  # real timestamp of that reading, straight off the sample
+    views_at_breakout: int
+    peak_views: int
+    growth_multiple: float | None  # peak / at-breakout; None when not computable
+    current_status_label: str  # may have cooled since
+    alert_submitted: bool  # from the alerts table, never inferred
 
 
 class BreakoutLogResponse(BaseModel):
-    """The monitoring run is a single bounded 7 sim-day window (CLAUDE.md),
-    which is honestly "one week" of monitoring — not a real, indefinitely
-    recurring wall-clock cycle. `entries` covers that whole window; there's
-    no persisted concept of a prior run to show as history yet."""
-
     entries: list[BreakoutLogEntry]
-    window_start_sim_hours: float
-    window_end_sim_hours: float | None
+    current_sim_hours: float | None

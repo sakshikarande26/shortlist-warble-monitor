@@ -58,3 +58,37 @@ export function getStatus(): Promise<SystemStatus> {
 export function getBreakoutLog(): Promise<BreakoutLogResponse> {
   return request<BreakoutLogResponse>("/api/breakouts");
 }
+
+export interface AgentChatRequest {
+  session_id: string;
+  message: string;
+  selected_post_id?: string;
+}
+
+export interface AgentChatResponse {
+  text: string;
+  facts_used: Record<string, unknown>;
+  llm_available: boolean;
+}
+
+// The API key lives only on the server; the browser never sees it.
+export async function sendAgentMessage(body: AgentChatRequest): Promise<AgentChatResponse> {
+  let response: Response;
+  try {
+    response = await fetch(`${BASE_URL}/api/agent/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    throw new ApiError("Couldn't reach the server. Check your connection and try again.");
+  }
+  if (!response.ok) {
+    throw new ApiError("Something went wrong asking the agent.", response.status);
+  }
+  return (await response.json()) as AgentChatResponse;
+}
+
+export async function endAgentSession(sessionId: string): Promise<void> {
+  await fetch(`${BASE_URL}/api/agent/chat/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+}

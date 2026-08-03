@@ -3,7 +3,7 @@ import { NavLink } from "react-router-dom";
 const NAV_ITEMS = [
   { label: "Home", to: "/" },
   { label: "Creator portfolio", to: "/creators" },
-  { label: "Breakout log", to: "/breakouts" },
+  { label: "Breakouts", to: "/breakouts" },
 ];
 
 // Slim, calm sidebar — a hairline divider carries the separation from the

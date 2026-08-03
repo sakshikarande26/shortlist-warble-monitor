@@ -117,6 +117,25 @@ function describeStreak(consecutiveChecks: number): string {
   return ` Elevated for ${consecutiveChecks} checks in a row.`;
 }
 
+/** Creator-level context for a post's detail page: who the creator is, and
+ * how this post's pace sits against their norm. Grounded only in the
+ * fields this endpoint actually returns — nothing about the creator's
+ * other posts is available here, so it never claims any. */
+export function creatorInsight(detail: Pick<PostDetail, "creator" | "evidence">): string {
+  const { handle, followers, category } = detail.creator;
+  const audience = `@${handle} has ${formatFollowers(followers)}${category ? ` in ${category}` : ""}.`;
+
+  const evidence = detail.evidence;
+  if (!evidence || evidence.creator_pace_ratio === null || evidence.creator_pace_basis === null) {
+    return `${audience} Not enough history yet to compare this post against their usual pace.`;
+  }
+
+  const multiple = `${evidence.creator_pace_ratio.toFixed(1)}×`;
+  return evidence.creator_pace_basis === "creator"
+    ? `${audience} This post is running ${multiple} their normal pace for a post this age.`
+    : `${audience} Too few other posts from them to compare against yet, so this is measured ${multiple} against the post's own earlier pace.`;
+}
+
 /** Considerations, never autonomous actions — the marketer decides. Keyed
  * off the same canonical status_label as everything else, not a separate
  * absolute-state mapping. */
@@ -197,6 +216,23 @@ export function isStale(latestSimHours: number | null, currentSimHours: number |
  * grounded in the real sim_hours number but means something to a marketer
  * in a way a raw "hour 62" reading never does. */
 const MONITORING_WINDOW_DAYS = 7;
+
+/** "Tue 7 Jul 2026, 3:42 AM" from a reading's real timestamp. Uses the
+ * timestamp stored on the sample itself, never a value derived from
+ * sim_hours. */
+export function formatMoment(isoTimestamp: string | null): string {
+  if (!isoTimestamp) return "Time not recorded";
+  const date = new Date(isoTimestamp);
+  if (Number.isNaN(date.getTime())) return "Time not recorded";
+  return date.toLocaleString(undefined, {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
 
 export function formatMonitoringProgress(simHours: number): string {
   const day = Math.min(Math.floor(simHours / 24) + 1, MONITORING_WINDOW_DAYS);

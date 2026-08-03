@@ -15,19 +15,19 @@ type LoadState =
   | { status: "error"; message: string }
   | { status: "ready"; data: CreatorsResponse };
 
-type Filter = "all" | "needs_attention" | "taking_off" | "worth_watching";
+// No separate "Needs attention" filter: it's exactly the union of the two
+// specific ones below, so it returns an identical list whenever only one
+// kind of signal is present.
+type Filter = "all" | "taking_off" | "worth_watching";
 
 const FILTERS: { id: Filter; label: string }[] = [
   { id: "all", label: "All" },
-  { id: "needs_attention", label: "Needs attention" },
   { id: "taking_off", label: "Taking off" },
   { id: "worth_watching", label: "Worth watching" },
 ];
 
 function matchesFilter(creator: CreatorRosterEntry, filter: Filter): boolean {
   switch (filter) {
-    case "needs_attention":
-      return creator.needs_attention_count > 0;
     case "taking_off":
       return creator.taking_off_count > 0;
     case "worth_watching":

@@ -1,13 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ApiError, getBreakoutLog } from "../lib/api";
-import type { BreakoutLogResponse } from "../lib/types";
-import { formatMonitoringProgress, formatRelativeSimTime } from "../lib/copy";
+import type { BreakoutLogEntry, BreakoutLogResponse } from "../lib/types";
+import { formatMoment, formatViews } from "../lib/copy";
 import { SkeletonCard, SkeletonLine } from "../components/states/Skeleton";
 import { EmptyState } from "../components/states/EmptyState";
 import { ErrorState } from "../components/states/ErrorState";
-import { Surface } from "../components/ui/Surface";
-import { StatusPill } from "../components/ui/StatusPill";
 
 type LoadState =
   | { status: "loading" }
@@ -22,7 +20,7 @@ export function BreakoutLog() {
     getBreakoutLog()
       .then((data) => setState({ status: "ready", data }))
       .catch((error: unknown) => {
-        const message = error instanceof ApiError ? error.message : "Couldn't load the breakout log.";
+        const message = error instanceof ApiError ? error.message : "Couldn't load breakouts.";
         setState({ status: "error", message });
       });
   }, []);
@@ -35,77 +33,99 @@ export function BreakoutLog() {
     <div className="space-y-6">
       <div>
         <p className="text-[26px] leading-snug font-medium tracking-tight text-ink sm:text-[30px]">
-          Breakout log
+          Breakouts
         </p>
         <p className="mt-1 text-sm text-ink-muted">
-          Every confirmed breakout alert this monitoring week, newest first.
+          Every post that has broken out so far, newest first.
         </p>
       </div>
 
-      {state.status === "loading" && <BreakoutLogSkeleton />}
+      {state.status === "loading" && <BreakoutSkeleton />}
       {state.status === "error" && <ErrorState message={state.message} onRetry={load} />}
-      {state.status === "ready" && <BreakoutLogContent data={state.data} />}
-    </div>
-  );
-}
-
-function BreakoutLogContent({ data }: { data: BreakoutLogResponse }) {
-  const { entries, window_end_sim_hours } = data;
-  const progress =
-    window_end_sim_hours !== null ? formatMonitoringProgress(window_end_sim_hours) : "Day 1 of 7";
-
-  return (
-    <div className="space-y-8">
-      <section>
-        <h2 className="mb-3 text-[15px] font-medium text-ink">This week ({progress})</h2>
-        {entries.length === 0 ? (
+      {state.status === "ready" &&
+        (state.data.entries.length === 0 ? (
           <EmptyState
-            title="No breakouts confirmed yet this week"
-            message="Once a post is confirmed taking off and an alert is sent, it will show up here."
+            title="No breakouts yet"
+            message="Once a post sustains unusually fast growth, it will be recorded here."
           />
         ) : (
-          <Surface className="divide-y divide-line">
-            {entries.map((entry) => (
-              <Link
-                key={entry.post_id}
-                to={`/posts/${entry.post_id}`}
-                className="flex items-center gap-4 px-4 py-4 transition-colors hover:bg-black/[0.02] sm:px-6"
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="truncate text-sm font-medium text-ink">
-                      @{entry.creator_handle}
-                    </span>
-                    <StatusPill label={entry.status_label} />
-                    {!entry.submitted && (
-                      <span className="text-[11px] text-ink-muted">(not confirmed sent)</span>
-                    )}
-                  </div>
-                  {entry.caption && (
-                    <p className="mt-0.5 truncate text-sm text-ink-muted">{entry.caption}</p>
-                  )}
-                  <p className="mt-1 text-xs text-ink-muted">
-                    {formatRelativeSimTime(entry.decided_sim_hours, window_end_sim_hours)}
-                  </p>
-                </div>
-              </Link>
+          <div className="space-y-3">
+            {state.data.entries.map((entry) => (
+              <BreakoutRow key={entry.post_id} entry={entry} />
             ))}
-          </Surface>
-        )}
-      </section>
-
-      <section>
-        <h2 className="mb-3 text-[15px] font-medium text-ink">History</h2>
-        <EmptyState
-          title="No earlier weeks yet"
-          message="This is the first monitoring week on record. Past weekly logs will appear here once a new monitoring week begins."
-        />
-      </section>
+          </div>
+        ))}
     </div>
   );
 }
 
-function BreakoutLogSkeleton() {
+function BreakoutRow({ entry }: { entry: BreakoutLogEntry }) {
+  return (
+    <Link
+      to={`/posts/${entry.post_id}`}
+      className="block rounded-xl border border-line bg-white/40 px-5 py-4 transition-colors hover:bg-white/60"
+    >
+      <div className="flex items-center gap-2">
+        <span className="truncate text-sm font-medium text-ink">@{entry.creator_handle}</span>
+        <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-black/[0.05] px-2.5 py-0.5 text-[11px] tracking-wide text-ink-muted">
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-ink-muted/50" />
+          {entry.current_status_label}
+        </span>
+        <AlertMarker submitted={entry.alert_submitted} />
+      </div>
+
+      {entry.caption && (
+        <p className="mt-1 truncate text-sm text-ink-muted">"{entry.caption}"</p>
+      )}
+
+      {/* Each stat gets its own nested surface so the numbers read as a
+          set of readings rather than one dense line of text. */}
+      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <Stat label="Broke out" value={formatMoment(entry.breakout_at)} />
+        <Stat label="Views at breakout" value={formatViews(entry.views_at_breakout)} />
+        <Stat label="Peak views" value={formatViews(entry.peak_views)} />
+        <Stat
+          label="Climbed"
+          value={entry.growth_multiple !== null ? `${entry.growth_multiple.toFixed(1)}×` : "Not enough history"}
+        />
+      </div>
+
+      {!entry.alert_submitted && (
+        <p className="mt-3 text-xs text-ink-muted">
+          Detected in history. Not alerted live, this post broke out before the current detection
+          logic was deployed.
+        </p>
+      )}
+    </Link>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-line bg-white/50 px-3 py-2">
+      <p className="text-[10px] tracking-wider text-ink-muted uppercase">{label}</p>
+      <p className="mt-0.5 text-sm font-medium text-ink tabular-nums">{value}</p>
+    </div>
+  );
+}
+
+// Greyscale, not a status color: this is about whether an alert was
+// actually submitted, which is a different axis from how the post is
+// performing. Never implies an alert was sent when it wasn't.
+function AlertMarker({ submitted }: { submitted: boolean }) {
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] tracking-wide ${
+        submitted ? "bg-black/[0.07] text-ink" : "border border-line text-ink-muted"
+      }`}
+    >
+      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${submitted ? "bg-ink" : "bg-ink-muted/40"}`} />
+      {submitted ? "Alert sent" : "No alert"}
+    </span>
+  );
+}
+
+function BreakoutSkeleton() {
   return (
     <div className="space-y-3">
       <SkeletonLine width="w-1/3" />

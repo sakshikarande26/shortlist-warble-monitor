@@ -1,6 +1,7 @@
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { AppShell } from "./components/ui/AppShell";
 import { SelectionProvider } from "./lib/selection";
+import { AgentChatProvider } from "./lib/agentChat";
 import { Home } from "./pages/Home";
 import { Creators } from "./pages/Creators";
 import { CreatorDetail } from "./pages/CreatorDetail";
@@ -10,6 +11,7 @@ import { BreakoutLog } from "./pages/BreakoutLog";
 function App() {
   return (
     <SelectionProvider>
+      <AgentChatProvider>
       <BrowserRouter>
         <Routes>
           <Route element={<AppShell />}>
@@ -21,6 +23,7 @@ function App() {
           </Route>
         </Routes>
       </BrowserRouter>
+      </AgentChatProvider>
     </SelectionProvider>
   );
 }
