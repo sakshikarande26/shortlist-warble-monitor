@@ -54,6 +54,7 @@ export interface HomeResponse {
   // re-derived from state client-side.
   act_now: HomePost[];
   watch_closely: HomePost[];
+  unavailable_posts: HomePost[];
   total_posts: number;
   unavailable_count: number;
   current_sim_hours: number | null;
@@ -101,6 +102,7 @@ export interface CreatorRosterEntry {
   taking_off_count: number;
   worth_watching_count: number;
   needs_attention_count: number;
+  unavailable_post_count: number;
   strongest_post: CreatorRosterPost | null;
   latest_sim_hours: number | null;
 }

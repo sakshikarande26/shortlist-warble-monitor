@@ -1,7 +1,10 @@
+import { Link } from "react-router-dom";
+
 interface StatCellData {
   label: string;
   value: string;
   sub?: string;
+  to?: string;
 }
 
 // Horizontal row of stat cells divided by hairline borders — not separate
@@ -10,15 +13,21 @@ interface StatCellData {
 export function StatStrip({ cells }: { cells: StatCellData[] }) {
   return (
     <div className="grid grid-cols-3 divide-x divide-line rounded-xl border border-line sm:grid-cols-3">
-      {cells.map((cell) => (
-        <div key={cell.label} className="px-4 py-3 sm:px-6 sm:py-4">
+      {cells.map((cell) => {
+        const Cell = cell.to ? Link : "div";
+        return (
+        <Cell
+          key={cell.label}
+          {...(cell.to ? { to: cell.to } : {})}
+          className={`block px-4 py-3 sm:px-6 sm:py-4 ${cell.to ? "transition-colors hover:bg-black/[0.03]" : ""}`}
+        >
           <p className="text-[11px] font-medium tracking-wider text-ink-muted uppercase">{cell.label}</p>
           <p className="mt-1 text-[26px] leading-none font-medium tracking-tight text-ink tabular-nums sm:text-[28px]">
             {cell.value}
           </p>
           {cell.sub && <p className="mt-1 text-[13px] text-ink-muted">{cell.sub}</p>}
-        </div>
-      ))}
+        </Cell>
+      );})}
     </div>
   );
 }
