@@ -3,17 +3,13 @@ import { Link } from "react-router-dom";
 import { ApiError, getCreators } from "../lib/api";
 import type { CreatorRosterEntry, CreatorsResponse } from "../lib/types";
 import { formatFollowers, formatRelativeSimTime, getInitials, performanceStatement } from "../lib/copy";
+import type { LoadState } from "../lib/loadState";
 import { SkeletonCard, SkeletonLine } from "../components/states/Skeleton";
 import { EmptyState } from "../components/states/EmptyState";
 import { ErrorState } from "../components/states/ErrorState";
 import { Surface } from "../components/ui/Surface";
 import { Sparkline } from "../components/Sparkline";
 import { statusTextColorClass } from "../components/ui/StatusPill";
-
-type LoadState =
-  | { status: "loading" }
-  | { status: "error"; message: string }
-  | { status: "ready"; data: CreatorsResponse };
 
 // No separate "Needs attention" filter: it's exactly the union of the two
 // specific ones below, so it returns an identical list whenever only one
@@ -39,7 +35,7 @@ function matchesFilter(creator: CreatorRosterEntry, filter: Filter): boolean {
 }
 
 export function Creators() {
-  const [state, setState] = useState<LoadState>({ status: "loading" });
+  const [state, setState] = useState<LoadState<CreatorsResponse>>({ status: "loading" });
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
 

@@ -1,3 +1,7 @@
+"""SQLAlchemy ORM models: creators, posts, samples (append-only), alerts
+(idempotent per post), and the request log used to track API budget spend.
+"""
+
 import datetime
 
 from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Index, Integer, String, Text, event

@@ -1,3 +1,8 @@
+"""The one shared async engine/session factory, and the declarative Base
+every ORM model inherits from. Everything else in the app gets its DB
+session through `get_session()` here, never by constructing its own.
+"""
+
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 

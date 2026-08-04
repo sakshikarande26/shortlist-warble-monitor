@@ -252,11 +252,20 @@ function capitalize(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
+/** The subset of EvidenceDetail the chip line actually reads — narrowed so
+ * this can also be fed an adapted (differently-named) evidence shape, like
+ * the chat agent's facts_used.selected_post, without a second chip
+ * function or a fabricated full EvidenceDetail. */
+type EvidenceChipSource = Pick<
+  EvidenceDetail,
+  "absolute_gain" | "window_hours" | "creator_pace_ratio" | "consecutive_qualifying_checks"
+>;
+
 /** Small evidence tags shown under an AI teammate answer — "+408 in 30m",
  * "14.1× baseline", "3 elevated checks" — so a claim is never just
  * asserted. Fed to the AiPanel alongside the LLM's (or its deterministic
  * fallback's) reply. */
-export function evidenceChips(evidence: EvidenceDetail | null): string[] {
+export function evidenceChips(evidence: EvidenceChipSource | null): string[] {
   if (!evidence) return [];
   const chips: string[] = [];
   const gain = Math.max(evidence.absolute_gain, 0);
@@ -270,6 +279,56 @@ export function evidenceChips(evidence: EvidenceDetail | null): string[] {
   }
   if (evidence.consecutive_qualifying_checks >= 2) {
     chips.push(`${evidence.consecutive_qualifying_checks} elevated checks`);
+  }
+  return chips;
+}
+
+interface AgentFactsSelectedPost {
+  recent_gain_views?: number | null;
+  recent_gain_window_hours?: number | null;
+  baseline_multiple?: number | null;
+  consecutive_elevated_checks?: number | null;
+}
+
+interface AgentFactsProgram {
+  posts_watched?: number;
+  creators_watched?: number;
+}
+
+/** The chat evidence row: what actually grounded a given chat reply,
+ * pulled from that reply's own `facts_used` rather than whatever post
+ * happens to be selected on screen right now. Reuses evidenceChips()'s
+ * exact chip text for the selected-post case (same visual language as
+ * everywhere else); for a program-level reply — no selected post — falls
+ * back to a small, honest program-shaped chip set instead of guessing
+ * which fact the reply actually drew on. */
+export function agentEvidenceChips(factsUsed: Record<string, unknown> | undefined): string[] {
+  if (!factsUsed) return [];
+
+  const selected = factsUsed.selected_post as AgentFactsSelectedPost | null | undefined;
+  if (selected && selected.recent_gain_views != null) {
+    return evidenceChips({
+      absolute_gain: selected.recent_gain_views,
+      window_hours: selected.recent_gain_window_hours ?? null,
+      creator_pace_ratio: selected.baseline_multiple ?? null,
+      consecutive_qualifying_checks: selected.consecutive_elevated_checks ?? 0,
+    });
+  }
+  if (selected) return [];
+
+  const chips: string[] = [];
+  const program = factsUsed.program as AgentFactsProgram | undefined;
+  if (program?.posts_watched != null && program?.creators_watched != null) {
+    chips.push(`${program.posts_watched} posts · ${program.creators_watched} creators`);
+  }
+  const breakouts = factsUsed.breakouts as unknown[] | undefined;
+  if (breakouts && breakouts.length > 0) {
+    chips.push(`${breakouts.length} breakouts`);
+  }
+  const alerts = factsUsed.alerts as { submitted?: boolean }[] | undefined;
+  const sentAlerts = alerts?.filter((a) => a.submitted).length ?? 0;
+  if (sentAlerts > 0) {
+    chips.push(`${sentAlerts} alerts sent`);
   }
   return chips;
 }

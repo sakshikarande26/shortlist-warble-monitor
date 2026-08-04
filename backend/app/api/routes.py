@@ -200,6 +200,23 @@ def _creator_pace_ratio(
     return None, None
 
 
+def _sparkline(sample_points: list[SamplePoint]) -> list[int]:
+    """Last few deduped view counts for a card's small trend line — not
+    full history, just enough to show a shape at a glance."""
+    return [p.views for p in _dedupe_samples(sample_points)[-SPARKLINE_POINTS:]]
+
+
+def _pace_sort_key(evidence: EvidenceDetail | None) -> float:
+    """Sort/rank key for "current momentum": -inf when there's no
+    trustworthy creator_pace_ratio, so a post without one always sorts
+    last instead of crashing a numeric sort. Shared by every ranking
+    across Home, Creators, and the agent's facts builder so they can
+    never rank the same posts in different orders."""
+    if evidence is None or evidence.creator_pace_ratio is None:
+        return float("-inf")
+    return evidence.creator_pace_ratio
+
+
 def _unified_status(state: PostState, is_gone: bool, pace_ratio: float | None) -> str:
     """The one canonical status shown everywhere — headline, section
     membership, row badge, detail page, right panel. Nothing else computes
@@ -319,7 +336,7 @@ async def get_home(session: AsyncSession = Depends(get_db)) -> HomeResponse:
     for post in posts:
         creator = creators.get(post.creator_id)
         comp = computations[post.id]
-        sparkline = [p.views for p in _dedupe_samples(comp.sample_points)[-SPARKLINE_POINTS:]]
+        sparkline = _sparkline(comp.sample_points)
 
         home_posts[post.id] = HomePost(
             post_id=post.id,
@@ -346,15 +363,10 @@ async def get_home(session: AsyncSession = Depends(get_db)) -> HomeResponse:
     # membership IS the same canonical label the card displays.
     active_posts = [p for p in home_posts.values() if not p.is_gone]
 
-    def pace(p: HomePost) -> float:
-        if p.evidence is None or p.evidence.creator_pace_ratio is None:
-            return float("-inf")
-        return p.evidence.creator_pace_ratio
-
     taking_off = [p for p in active_posts if p.status_label == _TAKING_OFF]
     worth_watching = [p for p in active_posts if p.status_label == _WORTH_WATCHING]
-    act_now = sorted(taking_off, key=pace, reverse=True)[:_SECTION_CAP]
-    watch_closely = sorted(worth_watching, key=pace, reverse=True)[:_SECTION_CAP]
+    act_now = sorted(taking_off, key=lambda p: _pace_sort_key(p.evidence), reverse=True)[:_SECTION_CAP]
+    watch_closely = sorted(worth_watching, key=lambda p: _pace_sort_key(p.evidence), reverse=True)[:_SECTION_CAP]
 
     unavailable_posts = sorted(
         (p for p in home_posts.values() if p.is_gone),
@@ -614,7 +626,7 @@ async def get_creators(session: AsyncSession = Depends(get_db)) -> CreatorsRespo
                 key=lambda p: computations[p.id].evidence.creator_pace_ratio,  # type: ignore[union-attr]
             )
             comp = computations[best.id]
-            sparkline = [p.views for p in _dedupe_samples(comp.sample_points)[-SPARKLINE_POINTS:]]
+            sparkline = _sparkline(comp.sample_points)
             strongest_post = CreatorRosterPost(
                 post_id=best.id,
                 caption=best.caption,
@@ -675,7 +687,7 @@ async def get_creator_detail(
 
         if comp.latest is not None and not is_gone:
             latest_views.append(comp.latest.views)
-        sparkline = [p.views for p in _dedupe_samples(comp.sample_points)[-SPARKLINE_POINTS:]]
+        sparkline = _sparkline(comp.sample_points)
 
         summary = CreatorPostSummary(
             post_id=post.id,
@@ -691,12 +703,7 @@ async def get_creator_detail(
         )
         (unavailable_posts if is_gone else active_posts).append(summary)
 
-    def pace(p: CreatorPostSummary) -> float:
-        if p.evidence is None or p.evidence.creator_pace_ratio is None:
-            return float("-inf")
-        return p.evidence.creator_pace_ratio
-
-    active_posts.sort(key=pace, reverse=True)
+    active_posts.sort(key=lambda p: _pace_sort_key(p.evidence), reverse=True)
     unavailable_posts.sort(key=lambda p: p.latest_sim_hours or 0, reverse=True)
 
     stats = CreatorStats(

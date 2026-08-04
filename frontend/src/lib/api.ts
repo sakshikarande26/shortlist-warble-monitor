@@ -63,6 +63,8 @@ export interface AgentChatRequest {
   session_id: string;
   message: string;
   selected_post_id?: string;
+  // True for the auto-triggered opening line — see agent.py's ChatRequest.
+  proactive?: boolean;
 }
 
 export interface AgentChatResponse {

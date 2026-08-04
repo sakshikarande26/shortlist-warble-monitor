@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ApiError, getHome, getStatus } from "../lib/api";
 import type { HomeResponse, SystemStatus } from "../lib/types";
+import type { LoadState } from "../lib/loadState";
 import { Briefing } from "../components/Briefing";
 import { TriageSection } from "../components/TriageSection";
 import { WhileAwaySection } from "../components/WhileAwaySection";
@@ -12,18 +13,20 @@ import { StatStrip } from "../components/ui/StatStrip";
 import { getLastVisitSimHours, setLastVisitSimHours } from "../lib/lastVisit";
 import { formatRelativeSimTime } from "../lib/copy";
 
-type LoadState =
-  | { status: "loading" }
-  | { status: "error"; message: string }
-  | { status: "ready"; data: HomeResponse; status_: SystemStatus };
+// Home is the one page that needs two endpoints at once (home + status),
+// so its "ready" data is the pair of them rather than a single response.
+interface HomeData {
+  home: HomeResponse;
+  status: SystemStatus;
+}
 
 export function Home() {
-  const [state, setState] = useState<LoadState>({ status: "loading" });
+  const [state, setState] = useState<LoadState<HomeData>>({ status: "loading" });
 
   const load = useCallback(() => {
     setState({ status: "loading" });
     Promise.all([getHome(), getStatus()])
-      .then(([data, status_]) => setState({ status: "ready", data, status_ }))
+      .then(([home, status]) => setState({ status: "ready", data: { home, status } }))
       .catch((error: unknown) => {
         const message = error instanceof ApiError ? error.message : "Couldn't load the briefing.";
         setState({ status: "error", message });
@@ -38,7 +41,7 @@ export function Home() {
     <>
       {state.status === "loading" && <HomeSkeleton />}
       {state.status === "error" && <ErrorState message={state.message} onRetry={load} />}
-      {state.status === "ready" && <HomeContent data={state.data} status={state.status_} />}
+      {state.status === "ready" && <HomeContent data={state.data.home} status={state.data.status} />}
     </>
   );
 }
@@ -144,7 +147,7 @@ function LastBreakoutInsight({
   return (
     <Link
       to={`/posts/${alert.post_id}`}
-      className="block rounded-xl border border-line bg-white/40 px-4 py-3 text-sm transition-colors hover:bg-black/[0.02]"
+      className="block rounded-xl border border-line bg-white/80 px-4 py-3 text-sm transition-colors hover:bg-black/[0.02]"
     >
       <span className="text-ink-muted">Last confirmed breakout: </span>
       <span className="font-medium text-ink">@{alert.creator_handle}</span>

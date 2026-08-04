@@ -3,17 +3,13 @@ import { Link } from "react-router-dom";
 import { ApiError, getBreakoutLog } from "../lib/api";
 import type { BreakoutLogEntry, BreakoutLogResponse } from "../lib/types";
 import { formatMoment, formatViews } from "../lib/copy";
+import type { LoadState } from "../lib/loadState";
 import { SkeletonCard, SkeletonLine } from "../components/states/Skeleton";
 import { EmptyState } from "../components/states/EmptyState";
 import { ErrorState } from "../components/states/ErrorState";
 
-type LoadState =
-  | { status: "loading" }
-  | { status: "error"; message: string }
-  | { status: "ready"; data: BreakoutLogResponse };
-
 export function BreakoutLog() {
-  const [state, setState] = useState<LoadState>({ status: "loading" });
+  const [state, setState] = useState<LoadState<BreakoutLogResponse>>({ status: "loading" });
 
   const load = useCallback(() => {
     setState({ status: "loading" });
@@ -63,7 +59,7 @@ function BreakoutRow({ entry }: { entry: BreakoutLogEntry }) {
   return (
     <Link
       to={`/posts/${entry.post_id}`}
-      className="block rounded-xl border border-line bg-white/40 px-5 py-4 transition-colors hover:bg-white/60"
+      className="block rounded-xl border border-line bg-white/80 px-5 py-4 transition-colors hover:bg-white/90"
     >
       <div className="flex items-center gap-2">
         <span className="truncate text-sm font-medium text-ink">@{entry.creator_handle}</span>
@@ -102,7 +98,7 @@ function BreakoutRow({ entry }: { entry: BreakoutLogEntry }) {
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-line bg-white/50 px-3 py-2">
+    <div className="rounded-lg border border-line bg-white/85 px-3 py-2">
       <p className="text-[10px] tracking-wider text-ink-muted uppercase">{label}</p>
       <p className="mt-0.5 text-sm font-medium text-ink tabular-nums">{value}</p>
     </div>

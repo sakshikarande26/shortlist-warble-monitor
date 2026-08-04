@@ -1,3 +1,8 @@
+"""FastAPI app entrypoint: wires up the read-only dashboard API and the
+agent chat router, and — when a built frontend is present — serves it
+from this same process so the whole product is one deployable service.
+"""
+
 import os
 from pathlib import Path
 

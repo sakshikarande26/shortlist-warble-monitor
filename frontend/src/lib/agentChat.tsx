@@ -6,12 +6,17 @@ export interface AgentMessage {
   role: "user" | "agent";
   text: string;
   offline?: boolean;
+  // The exact facts_used behind this specific reply — kept per message
+  // (not just off the currently selected post) so the evidence shown in
+  // the UI always matches what actually grounded that turn.
+  factsUsed?: Record<string, unknown>;
 }
 
 interface AgentChatState {
   messages: AgentMessage[];
   isSending: boolean;
   send: (message: string, selectedPostId: string | null) => Promise<void>;
+  greet: (selectedPostId: string | null) => Promise<void>;
   endChat: () => Promise<void>;
 }
 
@@ -41,7 +46,13 @@ export function AgentChatProvider({ children }: { children: ReactNode }) {
       });
       setMessages((prev) => [
         ...prev,
-        { id: `a-${Date.now()}`, role: "agent", text: reply.text, offline: !reply.llm_available },
+        {
+          id: `a-${Date.now()}`,
+          role: "agent",
+          text: reply.text,
+          offline: !reply.llm_available,
+          factsUsed: reply.facts_used,
+        },
       ]);
     } catch {
       // The panel is an assistant, not the product. A failure here shows a
@@ -60,6 +71,37 @@ export function AgentChatProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // The opening line: fires once, automatically, when the panel is first
+  // opened on a fresh conversation — no user bubble, since the manager
+  // didn't ask anything. Same endpoint, same guardrails, just a different
+  // trigger (see agent.py's `proactive` flag).
+  const greet = useCallback(async (selectedPostId: string | null) => {
+    setIsSending(true);
+    try {
+      const reply = await sendAgentMessage({
+        session_id: sessionId.current,
+        message: "",
+        selected_post_id: selectedPostId ?? undefined,
+        proactive: true,
+      });
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `a-${Date.now()}`,
+          role: "agent",
+          text: reply.text,
+          offline: !reply.llm_available,
+          factsUsed: reply.facts_used,
+        },
+      ]);
+    } catch {
+      // Silent — a failed opening line just leaves the static intro
+      // showing, which is a fine fallback for a nice-to-have.
+    } finally {
+      setIsSending(false);
+    }
+  }, []);
+
   const endChat = useCallback(async () => {
     const previous = sessionId.current;
     sessionId.current = `s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
@@ -73,8 +115,8 @@ export function AgentChatProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ messages, isSending, send, endChat }),
-    [messages, isSending, send, endChat],
+    () => ({ messages, isSending, send, greet, endChat }),
+    [messages, isSending, send, greet, endChat],
   );
   return <AgentChatContext.Provider value={value}>{children}</AgentChatContext.Provider>;
 }

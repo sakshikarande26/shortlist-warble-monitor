@@ -8,7 +8,7 @@
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 
-  --color-board: rgb(255 255 255 / 40%);
+  --color-board: rgb(255 255 255 / 85%);
 
   --color-ink: #12101a;
   --color-ink-muted: #6b6b78;
@@ -49,17 +49,17 @@ body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   min-height: 100vh;
-  /* Mesh: saturated blue top-left, violet upper-right, pink lower-left,
-     blue lower-right, deliberately more contrasting than a flat pastel wash
-     so the translucent cards read as floating glass rather than blending
-     into the page. */
-  background-color: #f4f2fb;
-  background-image:
+  /* Plain white for now — gradient mesh commented out below, kept in place
+     to bring back later. Cards still carry their own translucency +
+     backdrop-blur, so they read as a slight glass texture even on a flat
+     background. */
+  background-color: #ffffff;
+  /* background-image:
     radial-gradient(circle at 12% 8%, rgb(120 160 255 / 65%), transparent 45%),
     radial-gradient(circle at 82% 12%, rgb(180 120 255 / 60%), transparent 50%),
     radial-gradient(circle at 25% 85%, rgb(255 130 170 / 55%), transparent 50%),
     radial-gradient(circle at 88% 80%, rgb(110 150 255 / 55%), transparent 50%);
-  background-attachment: fixed;
+  background-attachment: fixed; */
 }
 
 /* Thin, translucent scrollbars for the internal scroll regions (page

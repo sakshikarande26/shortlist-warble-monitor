@@ -1,3 +1,9 @@
+"""Data-access layer: every read/write the app does against the DB goes
+through one of these functions, so the append-only/idempotency rules
+(samples, alerts) live in one place instead of being re-implemented at
+each call site.
+"""
+
 import datetime
 
 from sqlalchemy import select

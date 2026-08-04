@@ -3,18 +3,14 @@ import { Link } from "react-router-dom";
 import { ApiError, getHome } from "../lib/api";
 import type { HomeResponse } from "../lib/types";
 import { formatRelativeSimTime, formatViews, getInitials } from "../lib/copy";
+import type { LoadState } from "../lib/loadState";
 import { SkeletonCard, SkeletonLine } from "../components/states/Skeleton";
 import { EmptyState } from "../components/states/EmptyState";
 import { ErrorState } from "../components/states/ErrorState";
 import { Surface } from "../components/ui/Surface";
 
-type LoadState =
-  | { status: "loading" }
-  | { status: "error"; message: string }
-  | { status: "ready"; data: HomeResponse };
-
 export function UnavailablePosts() {
-  const [state, setState] = useState<LoadState>({ status: "loading" });
+  const [state, setState] = useState<LoadState<HomeResponse>>({ status: "loading" });
 
   const load = useCallback(() => {
     setState({ status: "loading" });

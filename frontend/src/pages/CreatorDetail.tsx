@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { ApiError, getCreatorDetail } from "../lib/api";
 import type { CreatorDetailResponse } from "../lib/types";
 import { formatFollowers, formatViews, getInitials } from "../lib/copy";
+import type { LoadState } from "../lib/loadState";
 import { useSelection } from "../lib/selection";
 import { CreatorPostRow } from "../components/CreatorPostRow";
 import { SkeletonCard, SkeletonLine } from "../components/states/Skeleton";
@@ -11,16 +12,11 @@ import { ErrorState } from "../components/states/ErrorState";
 import { StatStrip } from "../components/ui/StatStrip";
 import { Surface } from "../components/ui/Surface";
 
-type LoadState =
-  | { status: "loading" }
-  | { status: "error"; message: string }
-  | { status: "ready"; data: CreatorDetailResponse };
-
 export function CreatorDetail() {
   const { creatorId } = useParams<{ creatorId: string }>();
   const navigate = useNavigate();
   const { setActiveCreator } = useSelection();
-  const [state, setState] = useState<LoadState>({ status: "loading" });
+  const [state, setState] = useState<LoadState<CreatorDetailResponse>>({ status: "loading" });
 
   const load = useCallback(() => {
     if (!creatorId) return;

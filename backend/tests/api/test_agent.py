@@ -97,6 +97,33 @@ async def test_invented_number_is_rejected(monkeypatch):
     assert "987654" not in body["text"]
 
 
+def test_grounded_numbers_accepts_scaled_suffix():
+    """"40K" is a rounded restatement of a real 40000, not an invented
+    number — the guardrail must normalize the suffix before comparing."""
+    facts = {"selected_post": {"recent_gain_views": 40000}}
+    assert agent._numbers_are_grounded("It picked up about 40K views.", facts)
+
+
+def test_grounded_numbers_still_rejects_invented_scaled_number():
+    facts = {"selected_post": {"recent_gain_views": 40000}}
+    assert not agent._numbers_are_grounded("It picked up about 900K views.", facts)
+
+
+@pytest.mark.asyncio
+async def test_proactive_opening_line_is_not_a_user_turn(monkeypatch):
+    await _seed()
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/api/agent/chat",
+            json={"session_id": "s-proactive", "message": "", "proactive": True},
+        )
+    assert response.status_code == 200
+    assert response.json()["text"]  # a real opening line, not empty
+    assert len(agent._SESSIONS["s-proactive"]) == 1  # assistant turn only, no fake user turn
+
+
 @pytest.mark.asyncio
 async def test_grounded_reply_is_kept(monkeypatch):
     await _seed()
@@ -162,3 +189,75 @@ def test_no_api_key_in_frontend_source():
     for path in frontend.rglob("*.ts*"):
         assert "ANTHROPIC_API_KEY" not in path.read_text(), f"key referenced in {path}"
         assert "sk-ant-" not in path.read_text(), f"key literal in {path}"
+
+
+def test_creator_breakout_tally_counts_only_relevant_handles_and_caps():
+    breakouts = [
+        {"creator_handle": "a"},
+        {"creator_handle": "a"},
+        {"creator_handle": "b"},
+        {"creator_handle": "c"},  # not relevant, excluded
+        {"creator_handle": "d"},
+        {"creator_handle": "e"},
+        {"creator_handle": "f"},
+        {"creator_handle": "g"},
+    ]
+    relevant = {"a", "b", "d", "e", "f", "g"}  # 6 relevant handles, cap is 5
+
+    tally = agent._creator_breakout_tally(breakouts, relevant)
+
+    assert tally["a"] == 2
+    assert tally["b"] == 1
+    assert "c" not in tally  # never in relevant_handles
+    assert len(tally) == 5
+
+
+def test_program_level_quick_prompts_return_distinct_text():
+    """The offline fallback router's whole job is not collapsing different
+    questions onto the same summary — this pins that down for every
+    program-level quick prompt in AiPanel.tsx."""
+    facts = {
+        "program": {
+            "posts_watched": 10,
+            "creators_watched": 4,
+            "status_counts": {"Taking off": 1, "Worth watching": 2, "Steady": 6, "Unavailable": 1},
+            "current_sim_hour": 40.0,
+            "window_progress": "Day 2 of 7",
+        },
+        "alerts": [{"post_id": "wp_a", "creator_handle": "a", "submitted": True}],
+        "breakouts": [
+            {"post_id": "wp_a", "creator_handle": "a", "climbed_multiple": 3.2, "officially_alerted": True},
+        ],
+        "selected_post": None,
+        "top_movers": [{"creator_handle": "b", "status": "Worth watching", "baseline_multiple": 2.1}],
+    }
+    prompts = [
+        "What changed since I checked?",
+        "What deserves attention first?",
+        "Give me a stakeholder update",
+        "What have we alerted on so far?",
+    ]
+    answers = [agent.deterministic_answer(facts, p) for p in prompts]
+    assert len(set(answers)) == len(answers), answers
+
+
+def test_post_selected_quick_prompts_return_distinct_text():
+    selected = {
+        "creator_handle": "a",
+        "status": "Taking off",
+        "baseline_multiple": 2.4,
+        "baseline_compared_to": "creator",
+        "consecutive_elevated_checks": 3,
+        "alert_sent": False,
+        "is_creators_best_so_far": True,
+        "most_recent_other_breakout": {"creator_handle": "b", "climbed_multiple": 1.8},
+    }
+    facts = {"selected_post": selected, "program": {}, "alerts": [], "breakouts": [], "top_movers": []}
+    prompts = [
+        "Why does this matter?",
+        "Sustained or a spike?",
+        "Explain this for leadership",
+        "What would change your read?",
+    ]
+    answers = [agent.deterministic_answer(facts, p) for p in prompts]
+    assert len(set(answers)) == len(answers), answers

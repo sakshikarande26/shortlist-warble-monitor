@@ -1,10 +1,17 @@
+"""The actual Warble API calls the collector makes, one function per job:
+heartbeat (clock), discover (cheap/wide listing sweep), sample_live (dense
+batch polling), sync_alerts (startup reconciliation). Each function owns
+its own DB session and commits its own writes — loop.py only schedules
+these, it never touches Warble or the DB directly.
+"""
+
 import datetime
 import logging
 from dataclasses import dataclass
 
 from sqlalchemy.exc import IntegrityError
 
-from app.client.client import WarbleClient
+from app.client.client import MAX_BATCH_IDS, WarbleClient
 from app.client.exceptions import WarbleAPIError, WarbleRateLimitError
 from app.client.models import Me
 from app.collector.budget import BudgetTracker
@@ -13,7 +20,10 @@ from app.db.base import get_session
 
 logger = logging.getLogger("collector.sampler")
 
-LIVE_BATCH_SIZE = 10
+# The collector always chunks at the API's own max batch size, so this is
+# an alias, not a separately-tunable value — chunking smaller would just
+# waste requests, and chunking larger isn't possible (client.py enforces it).
+LIVE_BATCH_SIZE = MAX_BATCH_IDS
 
 
 def _parse_iso(value: str) -> datetime.datetime:

@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { ApiError, getPostDetail } from "../lib/api";
 import type { PostDetail as PostDetailType } from "../lib/types";
 import { creatorInsight, explainEvidence, formatPublishedAt } from "../lib/copy";
+import type { LoadState } from "../lib/loadState";
 import { useSelection } from "../lib/selection";
 import { StatusSummary } from "../components/StatusSummary";
 import { GrowthChart } from "../components/GrowthChart";
@@ -11,16 +12,11 @@ import { SkeletonChart, SkeletonLine } from "../components/states/Skeleton";
 import { ErrorState } from "../components/states/ErrorState";
 import { Surface } from "../components/ui/Surface";
 
-type LoadState =
-  | { status: "loading" }
-  | { status: "error"; message: string }
-  | { status: "ready"; data: PostDetailType };
-
 export function PostDetail() {
   const { postId } = useParams<{ postId: string }>();
   const navigate = useNavigate();
   const { setActivePost } = useSelection();
-  const [state, setState] = useState<LoadState>({ status: "loading" });
+  const [state, setState] = useState<LoadState<PostDetailType>>({ status: "loading" });
 
   const load = useCallback(() => {
     if (!postId) return;

@@ -30,11 +30,12 @@ from app.api.routes import (
     _WORTH_WATCHING,
     _compute_posts,
     _current_sim_hours,
+    _pace_sort_key,
     _samples_by_post,
     get_db,
 )
 from app.db.models import Alert, Creator, Post
-from app.detector.momentum import _dedupe_samples
+from app.detector.momentum import SamplePoint, _dedupe_samples
 from app.detector.states import run_state_machine
 
 logger = logging.getLogger(__name__)
@@ -47,28 +48,41 @@ MAX_HISTORY_MESSAGES = 24  # ~12 turns
 MAX_BREAKOUTS = 10
 MAX_ALERTS = 10
 MAX_MOVERS = 5
+MAX_CREATOR_TALLY = 5
 MONITORING_WINDOW_DAYS = 7
 
 CANONICAL_STATUSES = (_TAKING_OFF, _WORTH_WATCHING, _STEADY, _UNAVAILABLE)
 
-SYSTEM_PROMPT = """You are the monitoring analyst inside a tool used by the social media manager at LongSheet, a custom bedding brand. LongSheet runs a creator program: about 40 creators post LongSheet content on a social platform called Warble. The tool watches every post's view counts over time and flags posts whose growth becomes unusually fast and sustained, a "breakout." When a post breaks out, the moment to act is short: boost it, reshare it, or call the creator and extend the deal.
+SYSTEM_PROMPT = """You're the social media manager's second set of eyes at LongSheet, a custom bedding brand running a creator program of about 40 creators posting on a platform called Warble. You've done this long enough to pattern-match fast, the way someone with real reps at this job does — not by reciting a script.
 
-You will receive a JSON object of already-computed facts: program totals, alert history, breakout history, the currently selected post if any, and the current top movers. Everything numeric has already been calculated for you.
+The tradeoffs you're always weighing:
+- Spike vs. sustained: one good reading proves nothing; growth that holds across several checks in a row is the real signal.
+- Absolute gain vs. relative growth: a huge percentage jump on a tiny base is often noise, but a modest percentage on a big post can still be a large number of real views — scale changes what a given move actually means.
+- The three plays, and when each fits: boost with paid spend while momentum is rising and hasn't peaked yet (time-critical); reshare on brand channels when something's performing well but there's no urgency; extend the creator's deal when they're reliably hot, locking in today's rate before it changes.
 
-Your job is to help the manager think. You turn monitoring facts into meaning.
+You'll get a JSON object of facts already computed for you: program totals, alert history, breakout history, the currently selected post (if any), today's top movers, and — for creators who already show up elsewhere in the data — a tally of how many times they've broken out this window. Every number in it is real and pre-calculated — you never calculate anything yourself.
+
+Lead with your actual read of the situation — the conclusion first, in one clear sentence — then back it up: what happened in the numbers, why it's notable against the tradeoffs above, which tradeoff it turns on, and what that suggests. All of that in plain sentences, never a template with headers or restated labels. Different posts have different numbers, so don't reuse the same sentence shape twice; think each one through fresh. Name the specific creator, post, or metric you're talking about rather than speaking generically, and mention whether an alert's already gone out or the data's gone stale when that's relevant to the read.
+
+Reach across the whole picture, not just whatever's currently on screen: alert history tells you what's already been flagged, breakout history tells you what's already proven out, and the creator breakout tally tells you whether a creator has done this before. Weave those in when they change what the read means — a creator's second or third breakout this window is a pattern worth naming, not a coincidence to ignore — but don't force it into an answer where it isn't relevant.
+
+Sometimes the ask isn't "what's happening" but "write me something" — a short update to paste into a stakeholder channel, a quick note to send a creator whose post is taking off. Handle that the same grounded way: build it only from facts in the JSON, real numbers and handles and statuses, nothing else. Never invent contract terms, budget or dollar figures, campaign names, or a promise on the brand's behalf — you're drafting language the manager can send or edit, not deciding what happens next. Keep a stakeholder update to a tight couple of sentences; keep a creator note warm and specific to their real numbers, framed as something worth sending, not something already decided.
+
+Confident and brief: 2-3 sentences by default, 4-5 only when the question genuinely needs more. No filler, no restating the question back, no bullet-point walls, no emoji, no exclamation marks. A dry, understated aside is fine in small doses; cute framing is not. Talk like a marketer, not an engineer — never say "score," "state," "sim hours," "detector," or any other implementation term; say what a person managing this program would actually say.
+
+The manager can ask you anything in plain language. The interface offers a few suggested prompts as shortcuts, but those aren't the only questions you understand — answer whatever's actually asked, in whatever words they used.
 
 Hard rules:
 - Use ONLY facts present in the input JSON. Never state a number, percentage, multiple, date, or comparison that is not there. If you want to cite something you weren't given, say you don't have it.
-- Do not restate numbers the interface already shows. Interpret them. Say what the movement implies, not what it measures.
+- Do not restate numbers the interface already shows unless the number itself is doing real work in your explanation. Interpret them. Say what the movement implies, not what it measures.
 - You never decide. You do not declare something "is a breakout" or that it "should be boosted" - the system's deterministic detector decides status, not you. Frame everything as a consideration: "worth considering," "you may want to," "this looks like the kind of thing that..."
-- Never invent context: no contracts, budgets, usage rights, campaign goals, audience demographics, revenue, or competitor data. You do not know these.
+- Never invent context: no contracts, budgets, dollar figures, revenue, conversions, sentiment, business impact, usage rights, campaign goals, audience demographics, or competitor data. You do not know any of these — if asked, say so plainly rather than guessing.
 - Never contradict the status field for any post.
 - Never imply causation from engagement metrics alone.
 - If the facts are insufficient, say plainly what's missing and what would settle it, rather than speculating.
+- When asked to explain something "for leadership," "for Slack," or similar, compress to 1-2 plain sentences — same facts, no jargon, ready to paste into an update. Drop hedging language in that mode; state the read plainly.
 
-Answer in 2-4 short sentences unless the question genuinely needs more. Calm, direct, plain English. No emoji, no hype, no exclamation marks, no bullet-point walls.
-
-You have conversation memory within this session. Refer back naturally to posts already discussed."""
+You have conversation memory within this session. Refer back naturally to posts already discussed instead of re-introducing them."""
 
 
 # --- Session memory (in-process, per session_id) -----------------------
@@ -81,6 +95,11 @@ class ChatRequest(BaseModel):
     session_id: str
     message: str
     selected_post_id: str | None = None
+    # True for the auto-triggered opening line (panel just opened, no
+    # question asked yet) — routes to a different instruction and is never
+    # recorded as a user turn in session history, since the manager didn't
+    # actually say anything.
+    proactive: bool = False
 
 
 class ChatResponse(BaseModel):
@@ -112,6 +131,52 @@ def _evidence_facts(evidence: Any) -> dict[str, Any]:
         "baseline_compared_to": evidence.creator_pace_basis,
         "consecutive_elevated_checks": evidence.consecutive_qualifying_checks,
     }
+
+
+def _creator_post_ranking(
+    creator_id: str, post_id: str, posts: list[Post], samples_by_post: dict[str, list]
+) -> dict[str, Any]:
+    """Where this post ranks among this SAME creator's other posts by peak
+    views reached in the tracked window — "their best performer so far" or
+    "typical for them," grounded in real peak-view numbers rather than a
+    guess. Needs at least one other post with samples to rank against;
+    otherwise there's nothing to compare to and every field comes back
+    None rather than a fabricated "best."
+    """
+    creator_posts = [p for p in posts if p.creator_id == creator_id]
+    peaks: dict[str, int] = {}
+    for p in creator_posts:
+        points = _dedupe_samples(
+            [SamplePoint(sim_hours=s.sim_hours, views=s.views) for s in samples_by_post.get(p.id, [])]
+        )
+        if points:
+            peaks[p.id] = max(point.views for point in points)
+
+    if post_id not in peaks or len(peaks) < 2:
+        return {"is_creators_best_so_far": None, "rank_among_creators_posts": None, "creators_post_count": len(peaks)}
+
+    ranked = sorted(peaks.items(), key=lambda item: item[1], reverse=True)
+    rank = next(i for i, (pid, _) in enumerate(ranked, start=1) if pid == post_id)
+    return {
+        "is_creators_best_so_far": rank == 1,
+        "rank_among_creators_posts": rank,
+        "creators_post_count": len(peaks),
+    }
+
+
+def _creator_breakout_tally(breakouts: list[dict[str, Any]], relevant_handles: set[str]) -> dict[str, int]:
+    """How many times each creator already visible elsewhere in the payload
+    (top movers, the selected post, alert history) shows up in the breakout
+    list — lets the model say "this is their second breakout this window"
+    without doing the count itself. Scoped to already-relevant handles so
+    this doesn't grow the JSON with creators nobody asked about."""
+    counts: dict[str, int] = defaultdict(int)
+    for b in breakouts:
+        handle = b["creator_handle"]
+        if handle in relevant_handles:
+            counts[handle] += 1
+    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return dict(ranked[:MAX_CREATOR_TALLY])
 
 
 async def build_facts(session: AsyncSession, selected_post_id: str | None) -> dict[str, Any]:
@@ -177,15 +242,9 @@ async def build_facts(session: AsyncSession, selected_post_id: str | None) -> di
     breakouts.sort(key=lambda b: b["breakout_sim_hour"], reverse=True)
     breakouts = breakouts[:MAX_BREAKOUTS]
 
-    def pace(post: Post) -> float:
-        ev = computations[post.id].evidence
-        if ev is None or ev.creator_pace_ratio is None:
-            return float("-inf")
-        return ev.creator_pace_ratio
-
     movers = sorted(
         (p for p in posts if p.status != "gone" and computations[p.id].status_label != _STEADY),
-        key=pace,
+        key=lambda p: _pace_sort_key(computations[p.id].evidence),
         reverse=True,
     )[:MAX_MOVERS]
     top_movers = []
@@ -225,7 +284,23 @@ async def build_facts(session: AsyncSession, selected_post_id: str | None) -> di
             "alert_sent": post.id in submitted_ids,
             "is_available": post.status != "gone",
             **_evidence_facts(comp.evidence),
+            **_creator_post_ranking(post.creator_id, post.id, posts, samples_by_post),
+            # This post's own breakout entry (if it ever reached BREAKOUT)
+            # and the most recent OTHER post's breakout, both pulled
+            # straight from the same breakout-history list the Breakout
+            # Log page shows — so "how does this compare to the last
+            # breakout in the program" is two real numbers side by side,
+            # never a fabricated comparison score.
+            "own_breakout": next((b for b in breakouts if b["post_id"] == post.id), None),
+            "most_recent_other_breakout": next(
+                (b for b in breakouts if b["post_id"] != post.id), None
+            ),
         }
+
+    relevant_handles = {a["creator_handle"] for a in alerts} | {m["creator_handle"] for m in top_movers}
+    if selected:
+        relevant_handles.add(selected["creator_handle"])
+    creator_breakout_tally = _creator_breakout_tally(breakouts, relevant_handles)
 
     return {
         "program": {
@@ -240,12 +315,20 @@ async def build_facts(session: AsyncSession, selected_post_id: str | None) -> di
         "breakouts": breakouts,
         "selected_post": selected,
         "top_movers": top_movers,
+        "creator_breakout_tally": creator_breakout_tally,
     }
 
 
 # --- Guardrails --------------------------------------------------------
 
-_NUMBER_RE = re.compile(r"\d+(?:,\d{3})*(?:\.\d+)?")
+# Trailing K/M/B captured so "40K" is recognized as shorthand for 40000
+# rather than parsed as the bare number 40 and rejected as invented — a
+# writer abbreviating a real fact isn't the same as inventing a smaller one.
+# Capital letters only: lowercase "m"/"k" show up constantly in prose for
+# other units (30m = 30 minutes), and there's no reliable way to tell those
+# apart from a scale suffix without the capitalization convention.
+_NUMBER_RE = re.compile(r"\d+(?:,\d{3})*(?:\.\d+)?[KMB]?")
+_SCALE_SUFFIXES = {"K": 1_000, "M": 1_000_000, "B": 1_000_000_000}
 
 
 def _allowed_numbers(facts: Any, into: set[str]) -> set[str]:
@@ -260,9 +343,13 @@ def _allowed_numbers(facts: Any, into: set[str]) -> set[str]:
     elif isinstance(facts, bool):
         pass
     elif isinstance(facts, (int, float)):
-        into.add(f"{float(facts):.1f}")
-        into.add(str(int(facts)) if float(facts).is_integer() else f"{float(facts):.1f}")
-        into.add(f"{int(facts):,}" if float(facts).is_integer() else f"{facts:,.1f}")
+        value = float(facts)
+        into.add(f"{value:.1f}")
+        if value.is_integer():
+            into.add(str(int(value)))
+            into.add(f"{int(value):,}")
+        else:
+            into.add(f"{value:,.1f}")
     return into
 
 
@@ -278,14 +365,23 @@ def _numbers_are_grounded(reply: str, facts: dict[str, Any]) -> bool:
             continue
 
     for raw in _NUMBER_RE.findall(reply):
+        suffix = raw[-1] if raw and raw[-1] in _SCALE_SUFFIXES else None
+        numeric_part = raw[:-1] if suffix else raw
         try:
-            value = round(float(raw.replace(",", "")), 1)
+            value = float(numeric_part.replace(",", ""))
         except ValueError:
             return False
+        if suffix:
+            value *= _SCALE_SUFFIXES[suffix]
+        value = round(value, 1)
         if value in allowed_floats:
             continue
-        # A rounded restatement of a real fact is fine; a novel number is not.
-        if any(abs(value - candidate) < 0.05 for candidate in allowed_floats):
+        # A rounded restatement of a real fact is fine; a novel number is
+        # not. K/M/B is itself a rounding, so allow slack up to half that
+        # suffix's scale (e.g. "40K" covers any real fact from 39500-40500);
+        # plain numbers keep the tight decimal-rounding tolerance.
+        tolerance = _SCALE_SUFFIXES[suffix] / 2 if suffix else 0.05
+        if any(abs(value - candidate) < tolerance for candidate in allowed_floats):
             continue
         logger.warning("agent reply rejected: ungrounded number %s", raw)
         return False
@@ -347,22 +443,134 @@ def _answer_alerts(facts: dict[str, Any]) -> str:
     )
 
 
+def _answer_what_changed(facts: dict[str, Any]) -> str:
+    """"What changed since I checked?" — the most recent breakout, if any,
+    read straight off the breakout-history list (already sorted newest
+    first). Distinct from _answer_movers: this is about what already
+    happened, not what to look at right now."""
+    breakouts = facts["breakouts"]
+    if not breakouts:
+        return "Nothing has broken out since you last checked."
+    latest = breakouts[0]
+    lead = f"Most recently, @{latest['creator_handle']}'s post broke out"
+    multiple = latest.get("climbed_multiple")
+    if multiple is not None:
+        lead += f" and has climbed {multiple}x since"
+    lead += "."
+    if not latest.get("officially_alerted"):
+        lead += " It wasn't caught by an official alert, so it's worth a look."
+    return lead
+
+
+def _answer_why_matters(selected: dict[str, Any]) -> str:
+    """"Why does this matter?" — leads with the comparative pace (the
+    thing that actually makes a post worth acting on), then whether
+    there's still time to act or the moment's already been flagged."""
+    status = selected["status"].lower()
+    multiple = selected.get("baseline_multiple")
+    lead = f"It's {status}"
+    if multiple is not None:
+        basis = "this creator's usual pace" if selected.get("baseline_compared_to") == "creator" else "its own earlier pace"
+        lead += f", running about {multiple}x {basis}"
+    lead += "."
+    if selected.get("is_creators_best_so_far"):
+        return lead + " It's this creator's best performer in the tracked window so far."
+    if selected.get("alert_sent"):
+        return lead + " An alert already went out for it, so the window to act is now, not after it cools."
+    return lead + " Nothing has been sent yet, so there's still time to decide before it's obvious to everyone."
+
+
+def _answer_sustained_or_spike(selected: dict[str, Any]) -> str:
+    """"Sustained or a spike?" — the consecutive-checks streak is the
+    actual evidence for this question, so it leads and decides the
+    answer, not the status label alone."""
+    streak = selected.get("consecutive_elevated_checks") or 0
+    if streak >= 3:
+        return f"Sustained. It's held elevated growth for {streak} checks in a row, not just one good reading."
+    if streak == 2:
+        return "Leaning sustained: two checks in a row have qualified, but one more would settle it."
+    if selected["status"] == "Taking off":
+        return "It's cleared the bar on the numbers, but the streak hasn't built up much yet — worth confirming on the next check before calling it settled."
+    return "Too early to call from one reading. A single elevated check doesn't rule out a spike."
+
+
+def _answer_what_would_change_read(selected: dict[str, Any]) -> str:
+    """"What would change your read?" — a forward-looking, counterfactual
+    answer grounded in the same streak/breakout-comparison facts, not a
+    restatement of the current numbers."""
+    streak = selected.get("consecutive_elevated_checks") or 0
+    other = selected.get("most_recent_other_breakout")
+    if streak < 2:
+        return "Another elevated check back to back would be what moves this from a maybe to a real read."
+    if other is not None:
+        return (
+            f"A cooling-off on the next check would say this was a spike rather than sustained growth, "
+            f"the way @{other['creator_handle']}'s recent breakout kept climbing instead."
+        )
+    return "A cooling-off on the next check would be the signal this was a spike rather than sustained growth."
+
+
+def _answer_leadership_post(selected: dict[str, Any]) -> str:
+    """1-2 sentence, jargon-free version of the per-post facts — the
+    "explain this for leadership" mode's offline fallback. Same numbers as
+    the full narrative below, just compressed to paste-ready length."""
+    handle = f"@{selected['creator_handle']}"
+    status = selected["status"].lower()
+    multiple = selected.get("baseline_multiple")
+    if multiple is None:
+        return f"{handle}'s post is {status}; not enough history yet to size the movement."
+    basis = "usual pace" if selected.get("baseline_compared_to") == "creator" else "own earlier pace"
+    return f"{handle}'s post is {status}, running about {multiple}x {basis}."
+
+
+def _answer_leadership_program(facts: dict[str, Any]) -> str:
+    """Program-level counterpart to _answer_leadership_post."""
+    program = facts["program"]
+    counts = program["status_counts"]
+    taking_off = counts.get(_TAKING_OFF, 0)
+    watching = counts.get(_WORTH_WATCHING, 0)
+    if taking_off == 0 and watching == 0:
+        return f"Nothing unusual across {program['posts_watched']} tracked posts right now."
+    return (
+        f"{taking_off} post{'s' if taking_off != 1 else ''} taking off and {watching} worth watching "
+        f"across {program['posts_watched']} tracked posts."
+    )
+
+
 def deterministic_answer(facts: dict[str, Any], message: str = "") -> str:
     """Used whenever the model is unavailable or its reply fails a
     guardrail. Says only what the facts say, in the same calm register.
-    Routed by question so the offline path still actually answers what was
-    asked rather than repeating one summary."""
-    asked = message.lower()
 
-    if not facts.get("selected_post"):
+    Routed by intent, not just presence of a selected post — every quick
+    prompt (and reasonable paraphrases of it) gets its own answer function,
+    so two different questions never collapse onto the same generic
+    summary. The one truly generic per-post/program summary below is the
+    catch-all for free-text questions that don't match a known intent, not
+    a stand-in for the specific prompts.
+    """
+    asked = message.lower()
+    selected = facts.get("selected_post")
+
+    if "leadership" in asked or "slack" in asked or "stakeholder" in asked:
+        return _answer_leadership_post(selected) if selected else _answer_leadership_program(facts)
+
+    if selected:
+        if "why" in asked:
+            return _answer_why_matters(selected)
+        if "sustained" in asked or "spike" in asked:
+            return _answer_sustained_or_spike(selected)
+        if "would change" in asked or "reconsider" in asked:
+            return _answer_what_would_change_read(selected)
+    else:
+        if "changed" in asked or "since i checked" in asked or "what's new" in asked:
+            return _answer_what_changed(facts)
         if "alert" in asked:
             return _answer_alerts(facts)
         if "creator" in asked or "performing" in asked:
             return _answer_creators(facts)
-        if "attention" in asked or "first" in asked or "priorit" in asked:
+        if "attention" in asked or "first" in asked or "priorit" in asked or "deserve" in asked:
             return _answer_movers(facts)
 
-    selected = facts.get("selected_post")
     if selected:
         parts = [f"@{selected['creator_handle']}'s post is currently {selected['status'].lower()}."]
         gain = selected.get("recent_gain_views")
@@ -450,12 +658,35 @@ async def _call_llm(facts: dict[str, Any], history: list[dict[str, str]], messag
     return "".join(block.text for block in response.content if block.type == "text").strip() or None
 
 
+_PROACTIVE_POST_PROMPT = (
+    "This is the opening line of the conversation — the manager just opened the chat and hasn't "
+    "asked anything yet. Don't greet them or ask how you can help. Immediately say something "
+    "specific and useful about the selected post's current numbers, as if you'd already been "
+    "watching it."
+)
+_PROACTIVE_IDLE_PROMPT = (
+    "This is the opening line of the conversation — the manager just opened the chat and hasn't "
+    "asked anything yet. Don't greet them or ask how you can help. Immediately give a short "
+    "'while you were away' briefing: what changed and what deserves attention first, if anything."
+)
+
+
 @router.post("/agent/chat", response_model=ChatResponse)
 async def agent_chat(request: ChatRequest, session: AsyncSession = Depends(get_db)) -> ChatResponse:
     facts = await build_facts(session, request.selected_post_id)
     history = _SESSIONS[request.session_id]
 
-    reply = await _call_llm(facts, list(history), request.message)
+    # The proactive opening line reuses the same facts + guardrails as a
+    # real question, it's just never something the manager actually typed —
+    # so it gets its own instruction text and is never recorded as a user
+    # turn below.
+    prompt = (
+        (_PROACTIVE_POST_PROMPT if facts.get("selected_post") else _PROACTIVE_IDLE_PROMPT)
+        if request.proactive
+        else request.message
+    )
+
+    reply = await _call_llm(facts, list(history), prompt)
     llm_available = reply is not None
 
     if reply is not None and not (
@@ -464,10 +695,11 @@ async def agent_chat(request: ChatRequest, session: AsyncSession = Depends(get_d
         reply = None  # failed a guardrail: fall back rather than ship it
 
     if reply is None:
-        reply = deterministic_answer(facts, request.message)
+        reply = deterministic_answer(facts, "" if request.proactive else request.message)
         llm_available = False
 
-    history.append({"role": "user", "content": request.message})
+    if not request.proactive:
+        history.append({"role": "user", "content": request.message})
     history.append({"role": "assistant", "content": reply})
     del history[:-MAX_HISTORY_MESSAGES]
 
