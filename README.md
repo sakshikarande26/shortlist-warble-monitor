@@ -2,9 +2,9 @@
 
 # Social Media Platform Monitor
 
-**Real-time breakout detection for brand-creator programs on social media**
+**Content breakout detection for brand-creator programs on social media**
 
-Built by Sakshi Karande for the Shortlist AI Product Engineering take-home
+(Built for the Shortlist AI Product Engineering) 
 
 </div>
 
@@ -87,7 +87,7 @@ npm install
 npm run dev
 ```
 
-**Deployed:** [railway URL]
+**Deployed:** https://shortlist-warble-monitor-production.up.railway.app/
 
 ---
 
