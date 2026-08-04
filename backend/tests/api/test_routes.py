@@ -86,8 +86,14 @@ async def test_home_flat_post_excluded_from_triage():
 
     act_now_ids = [p["post_id"] for p in home_body["act_now"]]
     watch_ids = [p["post_id"] for p in home_body["watch_closely"]]
+    new_ids = [p["post_id"] for p in home_body["new_posts"]]
     assert "wp_0000000002" not in act_now_ids
     assert "wp_0000000002" not in watch_ids
+    # Flat growth never generates a qualifying signal, so the detector's
+    # raw state stays "NEW" even though status_label reads "Steady" —
+    # exactly the Momentum Board's "New" group, distinct from act_now/
+    # watch_closely membership (which is keyed off status_label).
+    assert "wp_0000000002" in new_ids
     assert home_body["total_posts"] == 1
 
     detail_body = detail_response.json()
@@ -330,3 +336,58 @@ async def test_status_endpoint_reports_real_system_context():
     assert body["most_notable_post"]["post_id"] == "wp_status_1"
     assert body["most_notable_post"]["status_label"] == "Taking off"
     assert body["most_recent_alert"] is None  # no alerts submitted in this test
+    assert body["alerts_sent"] == 0
+
+
+@pytest.mark.asyncio
+async def test_status_endpoint_reports_alerts_sent_count():
+    await _seed_creator()
+    await _seed_post("wp_status_2a")
+    await _seed_post("wp_status_2b")
+
+    async with get_session() as session:
+        await dao.record_alert(session, post_id="wp_status_2a", decided_sim_hours=1.0, submitted=True)
+        await dao.record_alert(session, post_id="wp_status_2b", decided_sim_hours=2.0, submitted=False)
+        await session.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/api/status")
+
+    assert response.status_code == 200
+    # Only the submitted alert counts — the non-submitted one is excluded.
+    assert response.json()["alerts_sent"] == 1
+
+
+@pytest.mark.asyncio
+async def test_posts_board_ranks_by_momentum_not_lifetime_views():
+    """GET /posts is the full 'Track program posts' board: every active
+    post, highest current momentum first — never by raw view count. A
+    small post growing fast should outrank a much bigger post growing at
+    its own normal pace.
+    """
+    await _seed_creator()
+    # Baseline posts define this creator's "typical" pace — flat growth.
+    for post_id in ("wp_board_baseline_1", "wp_board_baseline_2"):
+        await _seed_post(post_id)
+        await _insert_samples(
+            post_id,
+            [(0.0, 1000), (1.0, 1010), (2.0, 1020), (3.0, 1030), (4.0, 1040), (5.0, 1050)],
+        )
+    # Far fewer lifetime views than the baseline posts' eventual totals
+    # would be, but growing much faster relative to this creator's norm —
+    # this is the post that should rank first.
+    await _seed_post("wp_board_mover")
+    await _insert_samples(
+        "wp_board_mover",
+        [(0.0, 1000), (1.0, 1080), (2.0, 1160), (3.0, 1240), (4.0, 1320), (5.0, 1400)],
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/api/posts")
+
+    assert response.status_code == 200
+    body = response.json()
+    post_ids = [p["post_id"] for p in body["posts"]]
+    assert set(post_ids) == {"wp_board_baseline_1", "wp_board_baseline_2", "wp_board_mover"}
+    assert post_ids[0] == "wp_board_mover"  # highest comparative momentum, ranks first
+    assert body["total_posts"] == 3

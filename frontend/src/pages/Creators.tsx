@@ -70,7 +70,7 @@ export function Creators() {
   return (
     <div className="space-y-6">
       <div>
-        <p className="text-[26px] leading-snug font-medium tracking-tight text-ink sm:text-[30px]">
+        <p className="text-[26px] leading-snug font-bold tracking-tight text-ink sm:text-[30px]">
           Creator portfolio
         </p>
         {state.status === "ready" && (

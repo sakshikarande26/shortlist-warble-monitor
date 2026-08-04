@@ -1,31 +1,41 @@
 @import "tailwindcss";
 
-/* Floating translucent glass cards on a soft gradient-mesh canvas. One
-   indigo/purple brand accent for interactive elements (links, buttons,
-   selected states); semantic color for status (green = promising, orange
-   = needs attention). One clean sans throughout (Inter), light weights
-   (500 headings, 400 body). */
+/* Strict palette, per spec: a zinc neutral scale (inverted for this
+   light-mode site — the scale's dark end for text, its near-white end for
+   backgrounds, rather than the dark-mode roles it was originally labeled
+   with) plus a warm coral family and a cool lavender family. Violet
+   doubles as both the one brand accent and the "Worth watching" status
+   color — deliberate, not an oversight: this palette has no green, and
+   violet already reads as "the good/interesting color" everywhere else in
+   the app. Color itself is reserved for status/charts/signed metrics and
+   the breakout spotlight card — everything else (page chrome, plain stat
+   counts) stays neutral. One clean sans throughout (Inter). */
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 
   --color-board: rgb(255 255 255 / 85%);
 
-  --color-ink: #12101a;
-  --color-ink-muted: #6b6b78;
+  /* zinc scale, light-mode roles: 900 for primary text, 500 for muted. */
+  --color-ink: #18181b;
+  --color-ink-muted: #71717a;
   --color-line: rgb(0 0 0 / 8%);
 
-  --color-accent: #6d5df5;
-  --color-accent-soft: #edeafe;
+  --color-accent: #7670f2; /* violet */
+  --color-accent-soft: #e9daf4; /* lilac */
 
-  /* Taking off: needs attention now — clear warm orange. */
-  --color-taking-off: #e0812f;
-  --color-taking-off-soft: #fdf0e2;
-  /* Worth watching: promising — clear green. */
-  --color-watching: #2f9e5c;
-  --color-watching-soft: #e6f6ec;
-  /* Unavailable: muted violet-gray. */
-  --color-unavailable: #8c7fa8;
-  --color-unavailable-soft: #f1eef8;
+  /* Taking off: needs attention now — coral. */
+  --color-taking-off: #fc896d;
+  --color-taking-off-soft: #fdb19b; /* peach */
+  /* Worth watching: promising — violet, same hue as the brand accent. */
+  --color-watching: #7670f2;
+  --color-watching-soft: #dcc8f6; /* lavender */
+  /* Unavailable: muted — periwinkle. */
+  --color-unavailable: #c9c6ff;
+  --color-unavailable-soft: #e9daf4; /* lilac */
+
+  /* The breakout spotlight card's gradient — the one card allowed a tint,
+     coral-family to echo "Taking off." Nothing else pulls from this. */
+  --color-tint-breakout: #fdb19b; /* peach */
 
   --animate-fade-in: board-fade-in 0.35s ease-out both;
 }

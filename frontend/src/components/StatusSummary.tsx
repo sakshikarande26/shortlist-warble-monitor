@@ -13,7 +13,7 @@ export function StatusSummary({ detail }: StatusSummaryProps) {
   return (
     <div>
       <StatusPill label={detail.status_label} />
-      <p className="mt-3 text-[26px] leading-snug font-medium tracking-tight text-ink sm:text-[30px]">
+      <p className="mt-3 text-[26px] leading-snug font-bold tracking-tight text-ink sm:text-[30px]">
         {statusSummary(detail)}
       </p>
       <p className="mt-2 text-sm text-ink-muted">

@@ -54,6 +54,9 @@ export interface HomeResponse {
   // re-derived from state client-side.
   act_now: HomePost[];
   watch_closely: HomePost[];
+  // Raw detector state "NEW" (too little history yet), regardless of
+  // status_label — the Momentum Board's "New" group.
+  new_posts: HomePost[];
   unavailable_posts: HomePost[];
   total_posts: number;
   unavailable_count: number;
@@ -159,6 +162,7 @@ export interface SystemStatus {
   last_checked_sim_hours: number | null;
   most_notable_post: NotablePost | null;
   most_recent_alert: AlertSummary | null;
+  alerts_sent: number;
 }
 
 export interface BreakoutLogEntry {
@@ -176,5 +180,14 @@ export interface BreakoutLogEntry {
 
 export interface BreakoutLogResponse {
   entries: BreakoutLogEntry[];
+  current_sim_hours: number | null;
+}
+
+// The full "Track program posts" board: every active post, ranked by
+// current momentum (highest first) — never by lifetime views. Home only
+// ever shows a capped set of highlights; this is the complete list.
+export interface PostsBoardResponse {
+  posts: HomePost[];
+  total_posts: number;
   current_sim_hours: number | null;
 }

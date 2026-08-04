@@ -6,15 +6,23 @@ import type { LoadState } from "../lib/loadState";
 import { Briefing } from "../components/Briefing";
 import { TriageSection } from "../components/TriageSection";
 import { WhileAwaySection } from "../components/WhileAwaySection";
+import { ProgramPulse } from "../components/ProgramPulse";
+import { SpotlightPostCard } from "../components/SpotlightPostCard";
+import { PostCard } from "../components/PostCard";
+import { Surface } from "../components/ui/Surface";
 import { SkeletonLine, SkeletonCard } from "../components/states/Skeleton";
 import { EmptyState } from "../components/states/EmptyState";
 import { ErrorState } from "../components/states/ErrorState";
-import { StatStrip } from "../components/ui/StatStrip";
 import { getLastVisitSimHours, setLastVisitSimHours } from "../lib/lastVisit";
 import { formatRelativeSimTime } from "../lib/copy";
 
-// Home is the one page that needs two endpoints at once (home + status),
-// so its "ready" data is the pair of them rather than a single response.
+// How many "Removed" rows to preview on Home — the full list lives on
+// /unavailable. Matches the backend's own section cap for the other
+// Momentum Board groups (routes.py's _SECTION_CAP).
+const REMOVED_PREVIEW_CAP = 5;
+
+// Home is the Momentum Board screen — it needs two endpoints at once
+// (home + status) so its "ready" data is both rather than one response.
 interface HomeData {
   home: HomeResponse;
   status: SystemStatus;
@@ -52,7 +60,8 @@ export function Home() {
 // it doesn't re-derive groupings from state client-side (that was the old
 // bug: a section's header and its cards' labels could disagree).
 function HomeContent({ data, status }: { data: HomeResponse; status: SystemStatus }) {
-  const { act_now, watch_closely, total_posts, unavailable_count, current_sim_hours } = data;
+  const { act_now, watch_closely, new_posts, unavailable_posts, total_posts, unavailable_count, current_sim_hours } =
+    data;
 
   // Which act_now posts became notable since the marketer's last visit —
   // a side effect (reading/writing localStorage), so it belongs in an
@@ -87,7 +96,12 @@ function HomeContent({ data, status }: { data: HomeResponse; status: SystemStatu
     );
   }
 
-  if (act_now.length === 0 && watch_closely.length === 0 && unavailable_count === 0) {
+  if (
+    act_now.length === 0 &&
+    watch_closely.length === 0 &&
+    new_posts.length === 0 &&
+    unavailable_count === 0
+  ) {
     return (
       <EmptyState
         title="Nothing needs triage right now"
@@ -98,36 +112,79 @@ function HomeContent({ data, status }: { data: HomeResponse; status: SystemStatu
   }
 
   const whileAwayPosts = act_now.filter((p) => whileAwayIds.has(p.post_id));
+  const removedPreview = unavailable_posts.slice(0, REMOVED_PREVIEW_CAP);
 
   return (
     <div className="space-y-8">
+      <ProgramPulse
+        postsCount={total_posts}
+        needsAttentionCount={act_now.length + watch_closely.length}
+        alertsReceivedCount={status.alerts_sent}
+      />
+
       <Briefing
         actNowCount={act_now.length}
         watchCount={watch_closely.length}
         unavailableCount={unavailable_count}
       />
-      <StatStrip
-        cells={[
-          { label: "Act now", value: String(act_now.length) },
-          { label: "Watching", value: String(watch_closely.length) },
-          { label: "Unavailable", value: String(unavailable_count), to: "/unavailable" },
-        ]}
-      />
       <WhileAwaySection posts={whileAwayPosts} />
-      <TriageSection
-        title="Act now"
-        emptyMessage="All quiet on the breakout front"
-        emptyDetail="Nothing is taking off right now, but we're still watching closely."
-        emptyExtra={<LastBreakoutInsight status={status} currentSimHours={current_sim_hours} />}
-        posts={act_now}
-        currentSimHours={current_sim_hours}
-      />
+
+      <section>
+        <h2 className="mb-3 text-[15px] font-medium text-ink">Act now</h2>
+        {act_now.length > 0 ? (
+          <div className="space-y-3">
+            {/* The strongest current breakout gets the spotlight
+                treatment — only ever shown when it's a genuine breakout,
+                never for a "Worth watching" post, and never duplicated:
+                the rest of act_now (if any) lists separately below it. */}
+            <SpotlightPostCard post={act_now[0]} currentSimHours={current_sim_hours} />
+            {act_now.length > 1 && (
+              <Surface className="divide-y divide-line">
+                {act_now.slice(1).map((post) => (
+                  <PostCard key={post.post_id} post={post} currentSimHours={current_sim_hours} />
+                ))}
+              </Surface>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-sm text-ink-muted">
+              All quiet on the breakout front. Nothing is taking off right now, but we're still watching
+              closely.
+            </p>
+            <LastBreakoutInsight status={status} currentSimHours={current_sim_hours} />
+          </div>
+        )}
+      </section>
       <TriageSection
         title="Watch closely"
         emptyMessage="Nothing worth watching closely right now"
         posts={watch_closely}
         currentSimHours={current_sim_hours}
       />
+      <TriageSection
+        title="New"
+        emptyMessage="Nothing new to review"
+        emptyDetail="No recently discovered posts are still building their initial history."
+        posts={new_posts}
+        currentSimHours={current_sim_hours}
+      />
+      {unavailable_posts.length > 0 && (
+        <TriageSection
+          title="Removed"
+          emptyMessage="Nothing removed"
+          posts={removedPreview}
+          currentSimHours={current_sim_hours}
+        />
+      )}
+      {unavailable_posts.length > REMOVED_PREVIEW_CAP && (
+        <Link
+          to="/unavailable"
+          className="block text-xs font-medium text-ink-muted transition-colors hover:text-accent"
+        >
+          View all {unavailable_posts.length} removed posts &rarr;
+        </Link>
+      )}
     </div>
   );
 }

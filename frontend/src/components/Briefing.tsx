@@ -8,7 +8,7 @@ interface BriefingProps {
 
 export function Briefing({ actNowCount, watchCount, unavailableCount }: BriefingProps) {
   return (
-    <p className="text-[26px] leading-snug font-medium tracking-tight text-ink sm:text-[30px]">
+    <p className="text-[26px] leading-snug font-bold tracking-tight text-ink sm:text-[30px]">
       {buildBriefing(actNowCount, watchCount, unavailableCount)}
     </p>
   );

@@ -217,6 +217,39 @@ export function formatViews(views: number): string {
   return `${Math.round(views)}`;
 }
 
+/** 7 matches the sim's fixed monitoring window (CLAUDE.md) — mirrors
+ * backend/app/api/agent.py's _window_progress so "Day X of 7" never
+ * disagrees between the teammate panel and the home screen. Exported so
+ * every sim-hours-to-day bucketing on the frontend (BreakoutTrendChart
+ * included) uses this one formula instead of each re-deriving it. */
+export const MONITORING_WINDOW_DAYS = 7;
+
+export function dayBucket(simHours: number): number {
+  return Math.min(Math.floor(simHours / 24) + 1, MONITORING_WINDOW_DAYS);
+}
+
+export function windowProgress(currentSimHours: number | null): string {
+  if (currentSimHours === null) return "Not started yet";
+  return `Day ${dayBucket(currentSimHours)} of ${MONITORING_WINDOW_DAYS}`;
+}
+
+/** The home screen's trend chart shows the shape; this answers "so what" —
+ * one plain sentence a marketer can read without doing the counting
+ * themselves. `counts` is breakouts per sim-day (index 0 = Day 1),
+ * `currentDay` bounds how many of those days are real vs. not-yet-reached,
+ * so an empty window doesn't read as "nothing ever happens" when it's
+ * really just early. */
+export function breakoutTrendSummary(counts: number[], currentDay: number): string {
+  const reached = counts.slice(0, currentDay);
+  const total = reached.reduce((sum, n) => sum + n, 0);
+  if (total === 0) {
+    return `No breakouts yet through Day ${currentDay} of ${MONITORING_WINDOW_DAYS} — still early in the window.`;
+  }
+  const peakDay = reached.reduce((best, n, i) => (n > reached[best] ? i : best), 0) + 1;
+  const peakCount = reached[peakDay - 1];
+  return `${total} breakout${total === 1 ? "" : "s"} across the program this week, most on Day ${peakDay} (${peakCount}).`;
+}
+
 /** Briefing sentence at the top of Home — built only from real counts,
  * never invented (docs/FRONTEND.md: "built from REAL state"). */
 export function buildBriefing(actNowCount: number, watchCount: number, unavailableCount: number): string {

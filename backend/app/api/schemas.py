@@ -59,11 +59,16 @@ class HomePost(BaseModel):
 
 
 class HomeResponse(BaseModel):
-    # Both already ranked and capped server-side, and each filtered to
-    # exactly the status_label its section is named for — the UI renders
-    # them as given, it never re-derives groupings from state client-side.
+    # Already ranked and capped server-side, and each filtered to exactly
+    # the grouping its section is named for — the UI renders them as
+    # given, it never re-derives groupings from state client-side.
     act_now: list[HomePost]
     watch_closely: list[HomePost]
+    # Recently discovered posts (raw detector state == "NEW", regardless
+    # of status_label) that don't have enough history yet for a
+    # trustworthy momentum read — a Home-grouping concern only, not a
+    # change to the canonical status_label vocabulary.
+    new_posts: list[HomePost]
     unavailable_posts: list[HomePost]  # deleted/taken-down, history preserved
     total_posts: int  # distinguishes "nothing tracked yet" from "nothing moving right now"
     unavailable_count: int
@@ -172,6 +177,7 @@ class SystemStatus(BaseModel):
     last_checked_sim_hours: float | None
     most_notable_post: NotablePost | None  # most recently-updated Taking off / Worth watching post
     most_recent_alert: AlertSummary | None
+    alerts_sent: int  # total posts with a submitted alert, from the alerts table
 
 
 class BreakoutLogEntry(BaseModel):
@@ -189,4 +195,15 @@ class BreakoutLogEntry(BaseModel):
 
 class BreakoutLogResponse(BaseModel):
     entries: list[BreakoutLogEntry]
+    current_sim_hours: float | None
+
+
+class PostsBoardResponse(BaseModel):
+    """The full working set, for the 'Track program posts' page — every
+    active post, ranked by current momentum (highest first), never by
+    lifetime views. Home only ever shows a capped set of highlights; this
+    is the complete board behind it."""
+
+    posts: list[HomePost]
+    total_posts: int
     current_sim_hours: float | None

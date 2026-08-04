@@ -27,6 +27,7 @@ from app.api.schemas import (
     HomeResponse,
     NotablePost,
     PostDetail,
+    PostsBoardResponse,
     SystemStatus,
     TrajectoryPoint,
 )
@@ -322,16 +323,15 @@ def _compute_posts(
     return computations
 
 
-@router.get("/home", response_model=HomeResponse)
-async def get_home(session: AsyncSession = Depends(get_db)) -> HomeResponse:
-    creators = {c.id: c for c in (await session.execute(select(Creator))).scalars().all()}
-    posts = (await session.execute(select(Post))).scalars().all()
-    post_ids = [p.id for p in posts]
-    samples_by_post = await _samples_by_post(session, post_ids)
-    followers_by_creator = {cid: c.followers for cid, c in creators.items()}
-
-    computations = _compute_posts(posts, samples_by_post, followers_by_creator)
-
+def _build_home_posts(
+    posts: list[Post],
+    creators: dict[str, Creator],
+    computations: dict[str, _PostComputation],
+) -> dict[str, HomePost]:
+    """Every post as a HomePost, keyed by id — shared by /home (which
+    slices this into capped, grouped highlights) and /posts (which returns
+    the whole thing, ranked by momentum). One place builds the shape, so
+    the two endpoints can never disagree about a given post's fields."""
     home_posts: dict[str, HomePost] = {}
     for post in posts:
         creator = creators.get(post.creator_id)
@@ -356,6 +356,19 @@ async def get_home(session: AsyncSession = Depends(get_db)) -> HomeResponse:
             latest_sim_hours=comp.latest.sim_hours if comp.latest else None,
             sparkline=sparkline,
         )
+    return home_posts
+
+
+@router.get("/home", response_model=HomeResponse)
+async def get_home(session: AsyncSession = Depends(get_db)) -> HomeResponse:
+    creators = {c.id: c for c in (await session.execute(select(Creator))).scalars().all()}
+    posts = (await session.execute(select(Post))).scalars().all()
+    post_ids = [p.id for p in posts]
+    samples_by_post = await _samples_by_post(session, post_ids)
+    followers_by_creator = {cid: c.followers for cid, c in creators.items()}
+
+    computations = _compute_posts(posts, samples_by_post, followers_by_creator)
+    home_posts = _build_home_posts(posts, creators, computations)
 
     # Section membership matches status_label exactly: Act now is only
     # "Taking off" posts, Watch closely is only "Worth watching" posts — a
@@ -368,6 +381,18 @@ async def get_home(session: AsyncSession = Depends(get_db)) -> HomeResponse:
     act_now = sorted(taking_off, key=lambda p: _pace_sort_key(p.evidence), reverse=True)[:_SECTION_CAP]
     watch_closely = sorted(worth_watching, key=lambda p: _pace_sort_key(p.evidence), reverse=True)[:_SECTION_CAP]
 
+    # Raw detector state, not status_label: a post can be state == "NEW"
+    # (too little history for a trustworthy momentum read) while its
+    # status_label is "Steady" — that's exactly the post the Momentum
+    # Board's "New" group exists to surface, distinct from posts that are
+    # genuinely steady with a real track record.
+    new_recent = sorted(
+        (p for p in posts if p.status != "gone" and computations[p.id].state == "NEW"),
+        key=lambda p: p.first_seen_sim_hours,
+        reverse=True,
+    )[:_SECTION_CAP]
+    new_posts = [home_posts[p.id] for p in new_recent]
+
     unavailable_posts = sorted(
         (p for p in home_posts.values() if p.is_gone),
         key=lambda p: p.latest_sim_hours or 0,
@@ -377,9 +402,39 @@ async def get_home(session: AsyncSession = Depends(get_db)) -> HomeResponse:
     return HomeResponse(
         act_now=act_now,
         watch_closely=watch_closely,
+        new_posts=new_posts,
         unavailable_posts=unavailable_posts,
         total_posts=len(posts),
         unavailable_count=sum(1 for p in home_posts.values() if p.is_gone),
+        current_sim_hours=await _current_sim_hours(session),
+    )
+
+
+@router.get("/posts", response_model=PostsBoardResponse)
+async def get_posts_board(session: AsyncSession = Depends(get_db)) -> PostsBoardResponse:
+    """The full 'Track program posts' board: every active post, ranked by
+    current momentum (highest first) — never by lifetime views. Home only
+    shows a capped set of highlights (act_now/watch_closely/new_posts);
+    this is the complete, unfiltered list behind it, for the marketer who
+    wants to scan everything at once rather than just what's flagged."""
+    creators = {c.id: c for c in (await session.execute(select(Creator))).scalars().all()}
+    posts = (await session.execute(select(Post))).scalars().all()
+    post_ids = [p.id for p in posts]
+    samples_by_post = await _samples_by_post(session, post_ids)
+    followers_by_creator = {cid: c.followers for cid, c in creators.items()}
+
+    computations = _compute_posts(posts, samples_by_post, followers_by_creator)
+    home_posts = _build_home_posts(posts, creators, computations)
+
+    ranked = sorted(
+        (p for p in home_posts.values() if not p.is_gone),
+        key=lambda p: _pace_sort_key(p.evidence),
+        reverse=True,
+    )
+
+    return PostsBoardResponse(
+        posts=ranked,
+        total_posts=len(posts),
         current_sim_hours=await _current_sim_hours(session),
     )
 
@@ -433,11 +488,16 @@ async def get_status(session: AsyncSession = Depends(get_db)) -> SystemStatus:
             sim_hours=alert_row.decided_sim_hours,
         )
 
+    alerts_sent = (
+        await session.execute(select(func.count()).select_from(Alert).where(Alert.submitted.is_(True)))
+    ).scalar_one()
+
     return SystemStatus(
         posts_tracked=len(posts),
         last_checked_sim_hours=await _current_sim_hours(session),
         most_notable_post=most_notable_post,
         most_recent_alert=most_recent_alert,
+        alerts_sent=alerts_sent,
     )
 
 

@@ -29,8 +29,8 @@ export function UnavailablePosts() {
   return (
     <div className="space-y-6">
       <div>
-        <p className="text-[26px] leading-snug font-medium tracking-tight text-ink sm:text-[30px]">
-          No longer available
+        <p className="text-[26px] leading-snug font-bold tracking-tight text-ink sm:text-[30px]">
+          Removed posts
         </p>
         <p className="mt-1 text-sm text-ink-muted">
           Posts that have come down. Their history is preserved, their numbers are frozen where they

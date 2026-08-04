@@ -4,6 +4,7 @@ import type {
   CreatorsResponse,
   HomeResponse,
   PostDetail,
+  PostsBoardResponse,
   SystemStatus,
 } from "./types";
 
@@ -57,6 +58,10 @@ export function getStatus(): Promise<SystemStatus> {
 
 export function getBreakoutLog(): Promise<BreakoutLogResponse> {
   return request<BreakoutLogResponse>("/api/breakouts");
+}
+
+export function getPostsBoard(): Promise<PostsBoardResponse> {
+  return request<PostsBoardResponse>("/api/posts");
 }
 
 export interface AgentChatRequest {

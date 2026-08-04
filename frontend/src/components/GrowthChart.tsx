@@ -14,19 +14,27 @@ const WIDTH = 640;
 const HEIGHT = 280;
 const PADDING = { top: 16, right: 16, bottom: 46, left: 60 };
 const GRIDLINE = "rgb(0 0 0 / 7%)";
-const INK_MUTED = "#6b6b78";
-const INK = "#12101a";
-const BREAKOUT_COLOR = "#e0812f";
+const INK_MUTED = "#71717a";
+const INK = "#18181b";
+const BREAKOUT_COLOR = "#fc896d"; // coral, matches --color-taking-off
+// Signed metrics (a gain/loss since the last check) get the same
+// green/red convention a marketer already expects from anything
+// spreadsheet- or finance-adjacent — up is good, down is bad. Deliberately
+// outside the strict brand palette (which has neither): this is a
+// functional up/down signal, not a themed color choice.
+const POSITIVE_COLOR = "#2f9e5c";
+const NEGATIVE_COLOR = "#c94a3f";
 
 // The line color echoes the same status color as the badge, so the chart
 // itself reads as "this is what taking off/worth watching looks like,"
-// not just a generic sparkline.
+// not just a generic sparkline. Matches index.css's --color-taking-off/
+// --color-watching/--color-unavailable.
 const LINE_COLORS: Record<string, string> = {
-  "Taking off": "#e0812f",
-  "Worth watching": "#2f9e5c",
-  Unavailable: "#8c7fa8",
+  "Taking off": "#fc896d",
+  "Worth watching": "#7670f2",
+  Unavailable: "#c9c6ff",
 };
-const DEFAULT_LINE_COLOR = "#12101a";
+const DEFAULT_LINE_COLOR = "#18181b";
 
 // Hand-rolled SVG rather than a charting library — small enough code that
 // a dependency isn't worth it, and it keeps full control over "clean,
@@ -227,12 +235,7 @@ export function GrowthChart({ trajectory, isGone, goneSimHours, statusLabel, bre
               {Math.round(hovered.sim_hours)}h since first tracked
             </text>
             {hoveredGrowthPct !== null && (
-              <text
-                x={10}
-                y={45}
-                fontSize={10}
-                fill={hoveredGrowthPct >= 0 ? LINE_COLORS["Taking off"] : INK_MUTED}
-              >
+              <text x={10} y={45} fontSize={10} fill={hoveredGrowthPct >= 0 ? POSITIVE_COLOR : NEGATIVE_COLOR}>
                 {hoveredGrowthPct >= 0 ? "+" : ""}
                 {hoveredGrowthPct.toFixed(1)}% since last check
               </text>
