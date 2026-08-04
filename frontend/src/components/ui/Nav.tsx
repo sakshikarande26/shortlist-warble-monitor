@@ -87,6 +87,10 @@ export function Nav({ onOpenAgent }: { onOpenAgent: () => void }) {
             </div>
           ))}
         </div>
+
+        <p className="mt-4 border-t border-line pt-3 text-[10px] leading-snug text-ink-muted">
+          Built by Sakshi Karande for Shortlist AI Product Engineering
+        </p>
       </div>
     </nav>
   );

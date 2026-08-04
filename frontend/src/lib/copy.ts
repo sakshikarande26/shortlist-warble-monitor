@@ -316,6 +316,24 @@ export function evidenceChips(evidence: EvidenceChipSource | null): string[] {
   return chips;
 }
 
+/** "+289 in 17m" as its own value, for table-style layouts (Track program
+ * posts) that want gain in a dedicated column rather than folded into a
+ * sentence — same numbers evidenceChips uses, just addressable alone. */
+export function gainColumn(evidence: EvidenceChipSource | null): string | null {
+  if (!evidence) return null;
+  const gain = Math.max(evidence.absolute_gain, 0);
+  const gainText = `+${gain.toLocaleString()}`;
+  return evidence.window_hours !== null ? `${gainText} in ${formatWindow(evidence.window_hours)}` : gainText;
+}
+
+/** "2.6× baseline" as its own value — null (not "0×") when there isn't
+ * enough history for a trustworthy comparison, same as everywhere else in
+ * the app that reads creator_pace_ratio. */
+export function paceColumn(evidence: EvidenceChipSource | null): string | null {
+  if (!evidence || evidence.creator_pace_ratio === null) return null;
+  return `${evidence.creator_pace_ratio.toFixed(1)}×`;
+}
+
 interface AgentFactsSelectedPost {
   recent_gain_views?: number | null;
   recent_gain_window_hours?: number | null;
@@ -364,4 +382,118 @@ export function agentEvidenceChips(factsUsed: Record<string, unknown> | undefine
     chips.push(`${sentAlerts} alerts sent`);
   }
   return chips;
+}
+
+/** One cited source behind an answer: the actual post the reply named,
+ * with its own real numbers and a way to go inspect it. */
+export interface AgentReference {
+  postId: string | null;
+  handle: string;
+  caption: string | null;
+  status: string | null;
+  facts: string[];
+}
+
+/** The union of every post-shaped entity build_facts() emits (selected
+ * post, top movers, alerts, breakouts) — they overlap but each carries a
+ * different subset, so every field is optional and only the present ones
+ * ever get rendered. */
+interface AgentFactsEntity {
+  post_id?: string;
+  creator_handle?: string;
+  caption?: string | null;
+  status?: string;
+  status_now?: string;
+  recent_gain_views?: number | null;
+  recent_gain_window_hours?: number | null;
+  baseline_multiple?: number | null;
+  consecutive_elevated_checks?: number | null;
+  climbed_multiple?: number | null;
+  peak_views?: number | null;
+  submitted?: boolean;
+}
+
+function toReference(entity: AgentFactsEntity): AgentReference {
+  const facts: string[] = [];
+  if (entity.recent_gain_views != null) {
+    const gain = `+${entity.recent_gain_views.toLocaleString()}`;
+    facts.push(
+      entity.recent_gain_window_hours != null
+        ? `${gain} in ${formatWindow(entity.recent_gain_window_hours)}`
+        : `${gain} views`,
+    );
+  }
+  if (entity.baseline_multiple != null) facts.push(`${entity.baseline_multiple.toFixed(1)}× baseline`);
+  if (entity.consecutive_elevated_checks != null && entity.consecutive_elevated_checks >= 2) {
+    facts.push(`${entity.consecutive_elevated_checks} elevated checks`);
+  }
+  if (entity.climbed_multiple != null) facts.push(`${entity.climbed_multiple.toFixed(1)}× since breakout`);
+  if (entity.peak_views != null) facts.push(`${formatViews(entity.peak_views)} peak`);
+  if (entity.submitted === true) facts.push("Alert sent");
+
+  return {
+    postId: entity.post_id ?? null,
+    handle: entity.creator_handle ?? "unknown",
+    caption: entity.caption ?? null,
+    status: entity.status ?? entity.status_now ?? null,
+    facts,
+  };
+}
+
+/** The sources behind one specific answer — resolved by matching the
+ * creators the reply actually named (@handle) against the entities in that
+ * same reply's facts blob. This is what makes a citation mean something:
+ * it's the post the sentence was about, with that post's own numbers, not
+ * the same program-wide totals pasted under every answer. Falls back to
+ * the selected post when the reply named no one (a whole-program summary),
+ * and to nothing at all rather than citing something the answer never
+ * mentioned. */
+export function agentReferences(
+  replyText: string,
+  factsUsed: Record<string, unknown> | undefined,
+): AgentReference[] {
+  if (!factsUsed) return [];
+
+  const selected = factsUsed.selected_post as AgentFactsEntity | null | undefined;
+  const movers = (factsUsed.top_movers as AgentFactsEntity[] | undefined) ?? [];
+  const alerts = (factsUsed.alerts as AgentFactsEntity[] | undefined) ?? [];
+  const breakouts = (factsUsed.breakouts as AgentFactsEntity[] | undefined) ?? [];
+
+  // Priority order: the post the manager is actually looking at, then the
+  // movers (richest live numbers), then alert/breakout history.
+  const pool: AgentFactsEntity[] = [...(selected ? [selected] : []), ...movers, ...alerts, ...breakouts];
+
+  const seen = new Set<string>();
+  const references: AgentReference[] = [];
+  for (const match of replyText.matchAll(/@([a-zA-Z0-9._]+)/g)) {
+    const handle = match[1];
+    if (seen.has(handle)) continue;
+    const entity = pool.find((candidate) => candidate.creator_handle === handle);
+    if (!entity) continue;
+    seen.add(handle);
+    references.push(toReference(entity));
+  }
+
+  if (references.length === 0 && selected?.creator_handle) {
+    references.push(toReference(selected));
+  }
+  return references;
+}
+
+/** The one-line program footing under an answer's references — the scope
+ * the answer was drawn from, stated once rather than repeated as cards. */
+export function agentProgramContext(factsUsed: Record<string, unknown> | undefined): string | null {
+  if (!factsUsed) return null;
+
+  const parts: string[] = [];
+  const program = factsUsed.program as AgentFactsProgram | undefined;
+  if (program?.posts_watched != null) parts.push(`${program.posts_watched} posts`);
+  if (program?.creators_watched != null) parts.push(`${program.creators_watched} creators`);
+  const breakouts = factsUsed.breakouts as unknown[] | undefined;
+  if (breakouts?.length) parts.push(`${breakouts.length} breakouts`);
+  const alerts = factsUsed.alerts as { submitted?: boolean }[] | undefined;
+  const sent = alerts?.filter((a) => a.submitted).length ?? 0;
+  if (sent > 0) parts.push(`${sent} alerts sent`);
+
+  return parts.length > 0 ? parts.join(" · ") : null;
 }

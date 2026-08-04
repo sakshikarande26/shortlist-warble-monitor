@@ -9,7 +9,7 @@
    else — nav, buttons, links, focus rings, "accent" — is neutral black on
    white. One clean sans throughout (Inter). */
 @theme {
-  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-sans: "Inter", sans-serif;
 
   --color-board: rgb(255 255 255 / 85%);
 
@@ -56,7 +56,7 @@
 
 body {
   color: var(--color-ink);
-  font-family: var(--font-sans);
+  font-family: "Inter", sans-serif;
   font-weight: 400;
   letter-spacing: -0.01em;
   -webkit-font-smoothing: antialiased;
@@ -73,6 +73,37 @@ body {
     radial-gradient(circle at 25% 85%, rgb(255 130 170 / 55%), transparent 50%),
     radial-gradient(circle at 88% 80%, rgb(110 150 255 / 55%), transparent 50%);
   background-attachment: fixed; */
+}
+
+.agent-pastel-bg {
+  background-color: rgb(255 252 247 / 56%);
+  background-image:
+    radial-gradient(circle at 19% 31%, rgb(150 129 255 / 34%) 0 15%, transparent 34%),
+    radial-gradient(circle at 73% 26%, rgb(255 127 117 / 32%) 0 20%, transparent 40%),
+    radial-gradient(circle at 91% 67%, rgb(188 150 255 / 34%) 0 18%, transparent 38%),
+    radial-gradient(circle at 16% 83%, rgb(255 112 86 / 34%) 0 18%, transparent 40%),
+    radial-gradient(circle at 75% 84%, rgb(177 190 255 / 30%) 0 20%, transparent 42%),
+    radial-gradient(circle at center, rgb(255 255 255 / 78%) 0 31%, transparent 58%),
+    repeating-radial-gradient(circle at 50% 50%, rgb(255 255 255 / 18%) 0 1px, transparent 1px 4px);
+  background-blend-mode: normal, normal, normal, normal, normal, screen, overlay;
+  backdrop-filter: blur(24px);
+}
+
+/* The same pastel wash as the chat column, but lighter and less
+   transparent — the evidence side has to stay quiet enough to read real
+   numbers off, so the colour drops to roughly a third and the white base
+   goes nearly opaque. */
+.agent-pastel-bg-soft {
+  background-color: rgb(255 253 250 / 92%);
+  background-image:
+    radial-gradient(circle at 19% 31%, rgb(150 129 255 / 11%) 0 15%, transparent 34%),
+    radial-gradient(circle at 73% 26%, rgb(255 127 117 / 10%) 0 20%, transparent 40%),
+    radial-gradient(circle at 91% 67%, rgb(188 150 255 / 11%) 0 18%, transparent 38%),
+    radial-gradient(circle at 16% 83%, rgb(255 112 86 / 11%) 0 18%, transparent 40%),
+    radial-gradient(circle at 75% 84%, rgb(177 190 255 / 9%) 0 20%, transparent 42%),
+    radial-gradient(circle at center, rgb(255 255 255 / 88%) 0 31%, transparent 58%);
+  background-blend-mode: normal, normal, normal, normal, normal, screen;
+  backdrop-filter: blur(24px);
 }
 
 /* Thin, translucent scrollbars for the internal scroll regions (page

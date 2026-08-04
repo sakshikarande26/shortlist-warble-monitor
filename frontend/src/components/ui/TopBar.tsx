@@ -30,9 +30,11 @@ export function TopBar() {
   }, []);
 
   return (
-    <div className="flex shrink-0 items-center justify-between rounded-3xl border border-line bg-board px-6 py-3 shadow-[0_20px_60px_rgb(0_0_0_/_10%)] backdrop-blur-[24px] sm:px-8">
-      <p className="text-sm font-medium text-ink">Performance Monitor</p>
-      <div className="flex items-center gap-3">
+    <div className="relative flex shrink-0 items-center justify-between rounded-3xl border border-line bg-board px-6 py-3 shadow-[0_20px_60px_rgb(0_0_0_/_10%)] backdrop-blur-[24px] sm:px-8">
+      <p className="pointer-events-none absolute left-1/2 -translate-x-1/2 text-center text-sm font-bold text-ink sm:text-base">
+        Shortlist Brand Performance Monitor
+      </p>
+      <div className="ml-auto flex items-center gap-3">
         {lastFetchedAt && (
           <span className="text-xs text-ink-muted">
             Last updated {formatMinutesAgo(lastFetchedAt)}

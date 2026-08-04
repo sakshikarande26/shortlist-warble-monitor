@@ -57,10 +57,19 @@ def _clear_sessions():
     agent._SESSIONS.clear()
 
 
-@pytest.mark.asyncio
-async def test_falls_back_when_key_missing(monkeypatch):
-    await _seed()
+@pytest.fixture
+def _no_llm_key(monkeypatch):
+    """Both places a key can come from: the process env, and settings
+    (which is where a key in .env actually lands — pydantic-settings never
+    exports into os.environ). Clearing only one leaves the agent quietly
+    live against the real API during tests."""
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr(agent.settings, "anthropic_api_key", None)
+
+
+@pytest.mark.asyncio
+async def test_falls_back_when_key_missing(_no_llm_key):
+    await _seed()
 
     body = await _chat()
 
@@ -97,6 +106,52 @@ async def test_invented_number_is_rejected(monkeypatch):
     assert "987654" not in body["text"]
 
 
+def test_split_reply_separates_answer_and_reasoning():
+    answer, reasoning = agent._split_reply(
+        "ANSWER: Momentum held across checks.\nREASONING: The pace is the tell, not the raw reach."
+    )
+    assert answer == "Momentum held across checks."
+    assert reasoning == "The pace is the tell, not the raw reach."
+
+
+def test_split_reply_tolerates_missing_labels():
+    """A reply that ignores the format is still a usable answer — it must
+    never be dropped just because the labels weren't emitted."""
+    answer, reasoning = agent._split_reply("Just a plain answer with no labels.")
+    assert answer == "Just a plain answer with no labels."
+    assert reasoning is None
+
+
+@pytest.mark.asyncio
+async def test_reasoning_is_returned_alongside_answer(monkeypatch):
+    await _seed()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+
+    with patch("anthropic.AsyncAnthropic") as client_cls:
+        client_cls.return_value.messages.create = AsyncMock(
+            return_value=_fake_reply(
+                "ANSWER: Momentum has held rather than spiked.\n"
+                "REASONING: Sustained pace beats a one-off spike when deciding where spend goes."
+            )
+        )
+        body = await _chat(post_id="wp_a")
+
+    assert body["llm_available"] is True
+    assert body["text"] == "Momentum has held rather than spiked."
+    assert body["reasoning"].startswith("Sustained pace beats")
+
+
+@pytest.mark.asyncio
+async def test_offline_fallback_still_supplies_reasoning(_no_llm_key):
+    """The side panel shouldn't go blank just because the model is down."""
+    await _seed()
+
+    body = await _chat(post_id="wp_a")
+
+    assert body["llm_available"] is False
+    assert body["reasoning"]
+
+
 def test_grounded_numbers_accepts_scaled_suffix():
     """"40K" is a rounded restatement of a real 40000, not an invented
     number — the guardrail must normalize the suffix before comparing."""
@@ -110,9 +165,8 @@ def test_grounded_numbers_still_rejects_invented_scaled_number():
 
 
 @pytest.mark.asyncio
-async def test_proactive_opening_line_is_not_a_user_turn(monkeypatch):
+async def test_proactive_opening_line_is_not_a_user_turn(_no_llm_key):
     await _seed()
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post(
@@ -158,9 +212,8 @@ async def test_reply_contradicting_status_is_rejected(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_session_memory_accumulates_and_clears(monkeypatch):
+async def test_session_memory_accumulates_and_clears(_no_llm_key):
     await _seed()
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
     await _chat("first question", session_id="s-mem")
     await _chat("second question", session_id="s-mem")
@@ -173,9 +226,8 @@ async def test_session_memory_accumulates_and_clears(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_history_is_capped(monkeypatch):
+async def test_history_is_capped(_no_llm_key):
     await _seed()
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
     for i in range(agent.MAX_HISTORY_MESSAGES):
         await _chat(f"question {i}", session_id="s-cap")

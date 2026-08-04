@@ -34,6 +34,7 @@ from app.api.routes import (
     _samples_by_post,
     get_db,
 )
+from app.config import settings
 from app.db.models import Alert, Creator, Post
 from app.detector.momentum import SamplePoint, _dedupe_samples
 from app.detector.states import run_state_machine
@@ -82,7 +83,16 @@ Hard rules:
 - If the facts are insufficient, say plainly what's missing and what would settle it, rather than speculating.
 - When asked to explain something "for leadership," "for Slack," or similar, compress to 1-2 plain sentences — same facts, no jargon, ready to paste into an update. Drop hedging language in that mode; state the read plainly.
 
-You have conversation memory within this session. Refer back naturally to posts already discussed instead of re-introducing them."""
+You have conversation memory within this session. Refer back naturally to posts already discussed instead of re-introducing them.
+
+Every reply you write has exactly two parts, in this format, with these literal labels:
+
+ANSWER: <the reply itself, following everything above — brief, plain, 2-3 sentences>
+REASONING: <the strategic read behind it, 3-5 sentences>
+
+The REASONING half is your working-out, shown in the manager's side panel next to the evidence. It's where you get room to think out loud: walk the trajectory the numbers actually trace, name which tradeoff this one turns on and why you weighed it the way you did, and land on the play it points toward and the window for it. Talk like a strategist who's run creator programs before — reach, momentum, pacing, amplification, paid support, whitelisting, organic lift, creative, the deal — and let some dry wit through, the kind that comes from having seen this pattern before, never a joke that costs the reader clarity. It's a short story with a point, not a bulleted recap and not an essay.
+
+Both halves obey every hard rule above without exception: only numbers that appear in the JSON, no invented budgets or contracts or campaign context, no declaring decisions the detector makes. A longer section is not licence to start guessing — if you don't have something, say you don't have it, in the reasoning as much as in the answer."""
 
 
 # --- Session memory (in-process, per session_id) -----------------------
@@ -104,6 +114,10 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     text: str
+    # The strategic read behind `text`, shown beside the evidence. None
+    # when the model didn't produce one (or wasn't available at all) —
+    # the panel simply omits it rather than inventing filler.
+    reasoning: str | None
     facts_used: dict[str, Any]
     llm_available: bool
 
@@ -618,11 +632,78 @@ def deterministic_answer(facts: dict[str, Any], message: str = "") -> str:
     )
 
 
+def deterministic_reasoning(facts: dict[str, Any]) -> str:
+    """The offline counterpart to the model's REASONING half: the same
+    strategic framing, assembled from real facts. Plainer than the model's
+    version by design — an offline panel should read as deliberately terse
+    rather than as a failed attempt at prose."""
+    selected = facts.get("selected_post")
+    if selected:
+        parts: list[str] = []
+        multiple = selected.get("baseline_multiple")
+        if multiple is not None:
+            basis = (
+                "this creator's usual pace"
+                if selected.get("baseline_compared_to") == "creator"
+                else "its own earlier pace"
+            )
+            parts.append(
+                f"@{selected['creator_handle']}'s post is pacing about {multiple}x {basis}, which is the "
+                f"comparison that matters more than raw reach here."
+            )
+        else:
+            parts.append(
+                f"@{selected['creator_handle']}'s post doesn't have enough history yet to compare its pace "
+                f"against anything, so there's no read to give on momentum."
+            )
+
+        streak = selected.get("consecutive_elevated_checks") or 0
+        if streak >= 3:
+            parts.append(
+                f"It's held that across {streak} checks in a row — sustained rather than a single spike, "
+                f"which is the version worth putting spend behind."
+            )
+        elif streak == 2:
+            parts.append("Two checks in a row have qualified; one more would settle whether this holds.")
+        else:
+            parts.append("The streak is too short to separate real momentum from one good reading.")
+
+        if selected.get("alert_sent"):
+            parts.append("An alert has already gone out, so the window to amplify is now rather than later.")
+        else:
+            parts.append("No alert has gone out yet, so there's still room to decide before it's obvious.")
+        return " ".join(parts)
+
+    movers = facts["top_movers"]
+    breakouts = facts["breakouts"]
+    sent = sum(1 for a in facts["alerts"] if a["submitted"])
+    if not movers:
+        return (
+            f"Nothing is outpacing its creator's own norm right now, across "
+            f"{facts['program']['posts_watched']} tracked posts. That's a quiet program, not a broken one — "
+            f"{len(breakouts)} posts have broken out over the window and {sent} alerts have gone out."
+        )
+
+    top = movers[0]
+    lead = f"@{top['creator_handle']} is the clearest mover, currently {top['status'].lower()}"
+    multiple = top.get("baseline_multiple")
+    if multiple is not None:
+        lead += f" at about {multiple}x its creator's usual pace"
+    return (
+        f"{lead}. {len(movers)} posts in total are running above their own creator's norm, which is the "
+        f"comparison to trust when creator sizes differ this much. Across the window {len(breakouts)} posts "
+        f"have broken out and {sent} alerts have gone out — worth weighing before committing spend anywhere."
+    )
+
+
 # --- LLM call ----------------------------------------------------------
 
 
 async def _call_llm(facts: dict[str, Any], history: list[dict[str, str]], message: str) -> str | None:
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    # Env var first so a shell/CI override still wins, then settings —
+    # which is the only place a key living in .env actually lands, since
+    # pydantic-settings never exports into os.environ.
+    api_key = os.environ.get("ANTHROPIC_API_KEY") or settings.anthropic_api_key
     if not api_key:
         logger.info("agent: no ANTHROPIC_API_KEY set, using deterministic answer")
         return None
@@ -647,7 +728,7 @@ async def _call_llm(facts: dict[str, Any], history: list[dict[str, str]], messag
         client = AsyncAnthropic(api_key=api_key, timeout=LLM_TIMEOUT_SECONDS)
         response = await client.messages.create(
             model=MODEL,
-            max_tokens=400,
+            max_tokens=700,  # room for the reasoning half as well as the answer
             system=SYSTEM_PROMPT,
             messages=turns,
         )
@@ -656,6 +737,27 @@ async def _call_llm(facts: dict[str, Any], history: list[dict[str, str]], messag
         return None
 
     return "".join(block.text for block in response.content if block.type == "text").strip() or None
+
+
+# The model is asked for "ANSWER: ... REASONING: ..." — tolerant of the
+# labels being bolded, lower-cased, or missing entirely, because a reply
+# that ignores the format is still a usable answer and shouldn't be thrown
+# away over punctuation.
+_ANSWER_LABEL_RE = re.compile(r"^\s*\**\s*answer\s*\**\s*:\s*", re.IGNORECASE)
+_REASONING_LABEL_RE = re.compile(r"\n\s*\**\s*reasoning\s*\**\s*:\s*", re.IGNORECASE)
+
+
+def _split_reply(raw: str) -> tuple[str, str | None]:
+    """Split the model's two-part output into (answer, reasoning). Falls
+    back to treating the whole thing as the answer when the model didn't
+    use the format — never drops content on the floor."""
+    body = _ANSWER_LABEL_RE.sub("", raw, count=1)
+    match = _REASONING_LABEL_RE.search(body)
+    if match is None:
+        return body.strip(), None
+    answer = body[: match.start()].strip()
+    reasoning = body[match.end() :].strip()
+    return (answer or body.strip()), (reasoning or None)
 
 
 _PROACTIVE_POST_PROMPT = (
@@ -686,24 +788,30 @@ async def agent_chat(request: ChatRequest, session: AsyncSession = Depends(get_d
         else request.message
     )
 
-    reply = await _call_llm(facts, list(history), prompt)
-    llm_available = reply is not None
+    raw = await _call_llm(facts, list(history), prompt)
+    llm_available = raw is not None
 
-    if reply is not None and not (
-        _numbers_are_grounded(reply, facts) and _status_is_consistent(reply, facts)
-    ):
-        reply = None  # failed a guardrail: fall back rather than ship it
+    # Guardrails run over the WHOLE raw reply, reasoning half included —
+    # a fabricated number is no more acceptable in the side panel than in
+    # the chat, and both are shipped together or not at all.
+    if raw is not None and not (_numbers_are_grounded(raw, facts) and _status_is_consistent(raw, facts)):
+        raw = None  # failed a guardrail: fall back rather than ship it
 
-    if reply is None:
+    if raw is None:
         reply = deterministic_answer(facts, "" if request.proactive else request.message)
+        reasoning = deterministic_reasoning(facts)
         llm_available = False
+    else:
+        reply, reasoning = _split_reply(raw)
 
     if not request.proactive:
         history.append({"role": "user", "content": request.message})
     history.append({"role": "assistant", "content": reply})
     del history[:-MAX_HISTORY_MESSAGES]
 
-    return ChatResponse(text=reply, facts_used=facts, llm_available=llm_available)
+    return ChatResponse(
+        text=reply, reasoning=reasoning, facts_used=facts, llm_available=llm_available
+    )
 
 
 @router.delete("/agent/chat/{session_id}")

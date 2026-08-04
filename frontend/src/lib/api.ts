@@ -74,6 +74,9 @@ export interface AgentChatRequest {
 
 export interface AgentChatResponse {
   text: string;
+  // The strategic read behind `text`, for the references panel. Null when
+  // the model didn't produce one.
+  reasoning: string | null;
   facts_used: Record<string, unknown>;
   llm_available: boolean;
 }

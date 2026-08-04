@@ -10,6 +10,8 @@ export interface AgentMessage {
   // (not just off the currently selected post) so the evidence shown in
   // the UI always matches what actually grounded that turn.
   factsUsed?: Record<string, unknown>;
+  // The strategic read behind this reply, shown in the references panel.
+  reasoning?: string | null;
 }
 
 interface AgentChatState {
@@ -52,6 +54,7 @@ export function AgentChatProvider({ children }: { children: ReactNode }) {
           text: reply.text,
           offline: !reply.llm_available,
           factsUsed: reply.facts_used,
+          reasoning: reply.reasoning,
         },
       ]);
     } catch {
@@ -92,6 +95,7 @@ export function AgentChatProvider({ children }: { children: ReactNode }) {
           text: reply.text,
           offline: !reply.llm_available,
           factsUsed: reply.facts_used,
+          reasoning: reply.reasoning,
         },
       ]);
     } catch {

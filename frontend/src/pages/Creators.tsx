@@ -7,7 +7,6 @@ import type { LoadState } from "../lib/loadState";
 import { SkeletonCard, SkeletonLine } from "../components/states/Skeleton";
 import { EmptyState } from "../components/states/EmptyState";
 import { ErrorState } from "../components/states/ErrorState";
-import { Surface } from "../components/ui/Surface";
 import { Sparkline } from "../components/Sparkline";
 import { statusTextColorClass } from "../components/ui/StatusPill";
 
@@ -146,72 +145,75 @@ function CreatorsList({
   }
 
   return (
-    <Surface className="divide-y divide-line">
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
       {creators.map((creator) => (
-        <CreatorRow key={creator.id} creator={creator} currentSimHours={currentSimHours} />
+        <CreatorCard key={creator.id} creator={creator} currentSimHours={currentSimHours} />
       ))}
-    </Surface>
+    </div>
   );
 }
 
-function CreatorRow({ creator, currentSimHours }: { creator: CreatorRosterEntry; currentSimHours: number | null }) {
+// Horizontal cards in a grid, not a single stacked list — each creator
+// gets its own bordered box so the roster reads as a portfolio to scan
+// side by side, not a long vertical feed.
+function CreatorCard({ creator, currentSimHours }: { creator: CreatorRosterEntry; currentSimHours: number | null }) {
   return (
     <Link
       to={`/creators/${creator.id}`}
-      className="group flex items-start gap-4 px-4 py-4 transition-colors hover:bg-black/[0.02] sm:px-6"
+      className="group flex h-full flex-col gap-3 rounded-2xl border border-line bg-white p-4 transition-colors hover:border-ink/20 sm:p-5"
     >
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-black/[0.04] text-sm font-medium text-ink">
-        {getInitials(creator.handle)}
-      </div>
-
-      <div className="min-w-0 flex-1">
-        <span className="truncate text-sm font-medium text-ink">@{creator.handle}</span>
-        <p className="mt-0.5 text-sm text-ink-muted">
-          {formatFollowers(creator.followers)} · {creator.active_post_count} tracked post
-          {creator.active_post_count === 1 ? "" : "s"}
-        </p>
-
-        <NeedsAttentionBreakdown creator={creator} />
-
-        {creator.active_post_count === 0 ? (
-          <p className="mt-2 text-sm text-ink-muted">No active posts right now</p>
-        ) : creator.strongest_post ? (
-          <div className="mt-2">
-            <p className="text-xs font-medium tracking-wide text-ink-muted uppercase">
-              Strongest current signal
-            </p>
-            {creator.strongest_post.caption && (
-              <p className="mt-1 truncate text-sm text-ink">"{creator.strongest_post.caption}"</p>
-            )}
-            <p className="mt-0.5 text-sm text-ink-muted">
-              {performanceStatement({
-                is_gone: false,
-                status_label: creator.strongest_post.status_label,
-                evidence: creator.strongest_post.evidence,
-              })}
-            </p>
-          </div>
-        ) : (
-          <p className="mt-2 text-sm text-ink-muted">Not enough history for comparison</p>
-        )}
-
-        <div className="mt-2 flex items-center justify-between gap-2">
+      <div className="flex items-center gap-3">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-black/[0.04] text-sm font-medium text-ink">
+          {getInitials(creator.handle)}
+        </div>
+        <div className="min-w-0 flex-1">
+          <span className="truncate text-sm font-medium text-ink">@{creator.handle}</span>
           <p className="text-xs text-ink-muted">
-            {creator.latest_sim_hours !== null
-              ? formatRelativeSimTime(creator.latest_sim_hours, currentSimHours)
-              : "No updates yet"}
+            {formatFollowers(creator.followers)} · {creator.active_post_count} tracked post
+            {creator.active_post_count === 1 ? "" : "s"}
           </p>
-          <span className="text-xs font-medium text-ink-muted opacity-0 transition-opacity group-hover:opacity-100">
-            View creator &rarr;
-          </span>
         </div>
+        {creator.strongest_post && creator.strongest_post.sparkline.length > 1 && (
+          <div className={`hidden shrink-0 sm:block ${statusTextColorClass(creator.strongest_post.status_label)}`}>
+            <Sparkline values={creator.strongest_post.sparkline} width={64} height={26} />
+          </div>
+        )}
       </div>
 
-      {creator.strongest_post && creator.strongest_post.sparkline.length > 1 && (
-        <div className={`hidden shrink-0 pt-1 opacity-70 transition-opacity group-hover:opacity-100 sm:block ${statusTextColorClass(creator.strongest_post.status_label)}`}>
-          <Sparkline values={creator.strongest_post.sparkline} />
+      <NeedsAttentionBreakdown creator={creator} />
+
+      {creator.active_post_count === 0 ? (
+        <p className="text-sm text-ink-muted">No active posts right now</p>
+      ) : creator.strongest_post ? (
+        <div>
+          <p className="text-[11px] font-medium tracking-wide text-ink-muted uppercase">
+            Strongest current signal
+          </p>
+          {creator.strongest_post.caption && (
+            <p className="mt-1 truncate text-sm text-ink">"{creator.strongest_post.caption}"</p>
+          )}
+          <p className="mt-0.5 text-sm text-ink-muted">
+            {performanceStatement({
+              is_gone: false,
+              status_label: creator.strongest_post.status_label,
+              evidence: creator.strongest_post.evidence,
+            })}
+          </p>
         </div>
+      ) : (
+        <p className="text-sm text-ink-muted">Not enough history for comparison</p>
       )}
+
+      <div className="mt-auto flex items-center justify-between gap-2 pt-1">
+        <p className="text-xs text-ink-muted">
+          {creator.latest_sim_hours !== null
+            ? formatRelativeSimTime(creator.latest_sim_hours, currentSimHours)
+            : "No updates yet"}
+        </p>
+        <span className="text-xs font-medium text-ink-muted opacity-0 transition-opacity group-hover:opacity-100">
+          View creator &rarr;
+        </span>
+      </div>
     </Link>
   );
 }
