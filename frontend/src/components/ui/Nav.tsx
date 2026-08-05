@@ -15,7 +15,7 @@ const NAV_ITEMS = [
 // screen edge. "Unavailable" isn't in this list — the Momentum Board's
 // Removed group is the entry point now; the /unavailable route still
 // works for deep links.
-export function Nav({ onOpenAgent }: { onOpenAgent: () => void }) {
+export function Nav({ onOpenAgent, onNavigate }: { onOpenAgent: () => void; onNavigate: () => void }) {
   return (
     <nav className="flex w-[220px] shrink-0 flex-col border-r border-line px-6 py-10">
       <div className="mb-10">
@@ -28,6 +28,7 @@ export function Nav({ onOpenAgent }: { onOpenAgent: () => void }) {
             key={to}
             to={to}
             end={to === "/"}
+            onClick={onNavigate}
             className={({ isActive }) =>
               `flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors ${
                 isActive
@@ -57,9 +58,6 @@ export function Nav({ onOpenAgent }: { onOpenAgent: () => void }) {
           <span className="text-sm text-ink">Warble active</span>
         </div>
 
-        <p className="mt-4 border-t border-line pt-3 text-[10px] leading-snug text-ink-muted">
-          Built by Sakshi Karande for Shortlist AI Product Engineering
-        </p>
       </div>
     </nav>
   );
