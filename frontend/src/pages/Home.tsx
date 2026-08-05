@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { ApiError, getBreakoutLog, getHome, getStatus } from "../lib/api";
+import { getBreakoutLog, getHome, getStatus } from "../lib/api";
 import type { BreakoutLogResponse, HomeResponse, SystemStatus } from "../lib/types";
-import type { LoadState } from "../lib/loadState";
+import { useCachedResource } from "../lib/dataCache";
 import { Briefing } from "../components/Briefing";
 import { TriageSection } from "../components/TriageSection";
 import { WhileAwaySection } from "../components/WhileAwaySection";
@@ -31,30 +30,25 @@ interface HomeData {
 }
 
 export function Home() {
-  const [state, setState] = useState<LoadState<HomeData>>({ status: "loading" });
-
-  const load = useCallback(() => {
-    const lastSeenAt = getLastSeenAt();
-    setState({ status: "loading" });
-    Promise.all([getHome(lastSeenAt), getStatus(), getBreakoutLog()])
-      .then(([home, status, breakouts]) => {
-        setState({ status: "ready", data: { home, status, breakouts } });
-        setLastSeenAt();
-      })
-      .catch((error: unknown) => {
-        const message = error instanceof ApiError ? error.message : "Couldn't load the briefing.";
-        setState({ status: "error", message });
-      });
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  const { state, refresh } = useCachedResource<HomeData>(
+    "home",
+    async () => {
+      const lastSeenAt = getLastSeenAt();
+      const [home, status, breakouts] = await Promise.all([
+        getHome(lastSeenAt),
+        getStatus(),
+        getBreakoutLog(),
+      ]);
+      setLastSeenAt();
+      return { home, status, breakouts };
+    },
+    "Couldn't load the briefing.",
+  );
 
   return (
     <>
       {state.status === "loading" && <HomeSkeleton />}
-      {state.status === "error" && <ErrorState message={state.message} onRetry={load} />}
+      {state.status === "error" && <ErrorState message={state.message} onRetry={refresh} />}
       {state.status === "ready" && (
         <HomeContent data={state.data.home} status={state.data.status} breakouts={state.data.breakouts} />
       )}
@@ -107,11 +101,8 @@ function HomeContent({
 
   return (
     <div className="space-y-8">
-      {/* Hierarchy, top to bottom: the one-line read first (what matters
-          most, in plain language), then the numbers behind it, then what
-          changed, then the full triage lists. Someone new to the app should
-          be able to stop reading after the headline and already know what
-          this product does. */}
+      {/* Hierarchy, top to bottom: the one-line read first, then the numbers
+          behind it, then what changed, then the full triage lists. */}
       <Briefing
         actNowCount={act_now.length}
         watchCount={watch_closely.length}

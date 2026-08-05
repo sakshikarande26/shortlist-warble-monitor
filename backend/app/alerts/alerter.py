@@ -24,6 +24,7 @@ from app.client.exceptions import (
 from app.collector.budget import BudgetTracker
 from app.db import dao
 from app.detector.evaluate import EvaluationResult
+from app.detector.states import _HITS_FOR_BREAKOUT
 
 logger = logging.getLogger("alerts.alerter")
 
@@ -57,10 +58,16 @@ class AlertFireStats:
 
 
 def _build_note(evaluation: EvaluationResult) -> str:
-    # TODO: replace with an LLM-generated brief (why + recommended play —
-    # boost/reshare/extend deal, per docs/PRODUCT.md) once that layer exists.
-    # This is the exact hook point: swap this function's body only.
-    return f"Breakout detected: {evaluation.reason} (score={evaluation.score:.2f})"
+    # Deliberately deterministic, not LLM-written: this note is part of the
+    # alert record, and the whole design rule here is that the model explains
+    # decisions rather than making or wording them. It states what the
+    # detector actually saw, in terms someone reading the alert feed can
+    # check against the post's own history.
+    return (
+        f"Sustained breakout confirmed at sim hour {evaluation.sim_hours:.1f}: "
+        f"growth cleared the qualifying bar on {_HITS_FOR_BREAKOUT} consecutive checks "
+        f"(momentum {evaluation.score:.2f}/1.00, {evaluation.reason})."
+    )
 
 
 def _parse_received_at(value: str | None) -> datetime.datetime | None:
@@ -101,8 +108,19 @@ class Alerter:
                 continue
             if any(p.post_id == post_id for p in work):
                 continue  # already queued this tick via _pending carryover
+            # Stamped with the moment the post ACTUALLY broke out
+            # (evaluation.sim_hours), not the moment this tick happened to
+            # notice. For a breakout caught in the same tick these are the
+            # same number; for one we're catching up on they aren't, and the
+            # honest local record is when it happened. `sim_hours` (this
+            # tick's clock) stays the fallback for any caller that hands us
+            # an evaluation without a real moment attached.
             work.append(
-                PendingAlert(post_id=post_id, note=_build_note(evaluation), decided_sim_hours=sim_hours)
+                PendingAlert(
+                    post_id=post_id,
+                    note=_build_note(evaluation),
+                    decided_sim_hours=evaluation.sim_hours or sim_hours,
+                )
             )
 
         for i, item in enumerate(work):

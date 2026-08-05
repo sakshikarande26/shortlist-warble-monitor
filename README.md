@@ -84,7 +84,20 @@ uv run uvicorn app.main:app --port 8001
 ```bash
 cd frontend
 npm install
+cp .env.example .env   # VITE_API_BASE_URL — points the dev server at the backend
 npm run dev
+```
+
+The `.env` step is required in local dev: there's no Vite proxy, so without
+`VITE_API_BASE_URL` the browser requests `/api/...` from the Vite origin and
+gets nothing. In production it's deliberately empty — the API and the built
+frontend are served from one origin by one process (`Dockerfile.web`).
+
+**Collector** (separate process — it must not share one with the API)
+```bash
+cd backend
+uv run alembic upgrade head
+uv run python -m app.collector.loop
 ```
 
 **Deployed:** https://shortlist-warble-monitor-production.up.railway.app/
@@ -93,40 +106,106 @@ npm run dev
 
 ## What "starting to move" means
 
-A post has to accelerate, and hold that acceleration across two
-consecutive checks, before it counts as a breakout. One good reading
-isn't enough; plenty of posts spike and fade.
+Every reading is turned into an *interval* — the growth between two
+consecutive samples of the same post. An interval **qualifies** when both
+of these hold:
 
-Two different bars, on purpose:
+1. **It moved enough to matter.** Either a large absolute gain
+   (≥ 500 views), *or* meaningful relative growth (≥ 15%) paired with a
+   small-number floor (≥ 100 views). Either/or, not both — a post at 1M
+   views adding 40K is a real breakout at only 4% growth, while 5 → 50
+   views is 900% and still noise.
+2. **It's fast for this post and this creator.** A composite score, half
+   from the post's pace against its own early trajectory, half from views
+   per hour per follower. A 10K-follower creator and a 1M-follower
+   creator can't be judged on the same raw numbers.
 
-- **Official alerts** use the strict, confirmed rule: a false alert
+Then a state machine requires that to **hold**:
+
+```
+NEW ──qualifies──▶ WATCH ──2 in a row──▶ RISING ──2 more──▶ BREAKOUT
+ ▲                                                              │
+ └────────────────── any interval fails ◀──── COOLING ◀─────────┘
+```
+
+Four consecutive qualifying intervals from a cold start. One good reading
+proves nothing; plenty of posts spike and fade. A post that stops
+qualifying drops to COOLING and has to re-earn its way back up.
+
+**Two different bars, on purpose:**
+
+- **Official alerts** use the strict, confirmed rule above. A false alert
   costs more trust than a slightly late one.
-- **The in-app attention queue** ranks by momentum *relative to a
-  creator's usual pace*, so there's always something worth looking at,
-  even on a quiet day.
+- **The in-app attention queue** ranks by pace *relative to a creator's
+  usual*, a deliberately softer bar, so there's something worth looking at
+  even on a quiet day. Softer, not absent: a comparative multiple is
+  withheld entirely unless the movement behind it clears a noise floor —
+  see the third bug below.
+
+**"Did it ever break out" is not "is it breaking out right now."**
+Alerting replays each post's full stored history and reports the *first*
+moment it crossed into BREAKOUT. Momentum fades between checks, and a post
+that has cooled by the time we look is still one the brand needed to hear
+about.
 
 ---
 
-## The two bugs I found
+## The bugs I found
 
-Both found the same way: pick a real breakout, run the detector on it
-by hand, check the number against what actually happened.
+All found the same way: replay the detector over real stored data and
+check the answer against what actually happened. None of them were caught
+by the unit tests, because every one of them passed the tests.
 
 1. **Duplicate samples at the same timestamp.** Cache and live readings
    sometimes landed at the same moment, creating a fake zero-growth
-   interval that broke the "sustained growth" streak. A 45× breakout
-   was sitting in the data and never fired. Fixed by deduplicating
-   samples by timestamp before scoring.
+   interval that broke the "sustained growth" streak. A 45× breakout was
+   sitting in the data and never fired. Fixed by deduplicating samples by
+   timestamp before scoring.
 
 2. **Relative-growth thresholds don't scale.** Requiring both a minimum
-   absolute gain *and* a minimum percentage per check works at 10K
-   views. At 1M views, adding 40K is a real breakout but only ~4%
-   growth, so it silently failed. Fixed by qualifying on absolute gain OR
-   relative growth, not both.
+   absolute gain *and* a minimum percentage per check works at 10K views.
+   At 1M views, adding 40K is a real breakout but only ~4% growth, so it
+   silently failed. Fixed by qualifying on absolute gain OR relative
+   growth, not both.
 
-**The lesson:** a detector that passes its own tests can still be
-silently wrong. The only way to catch that is testing it against
-something real, by hand, before trusting it.
+3. **A four-view gain ranked #1 on the momentum board.** Post
+   `wp_a0c3161228` gained 4 views in half an hour and came back at "8.4×
+   pace", labelled *Worth watching* and ranked top of the board — while
+   the detector had already gated that exact interval out as
+   `below_volume_floor`. Dividing a trivial gain by a near-flat baseline
+   makes a big, precise-looking, meaningless number. Fixed with a noise
+   floor on the comparative ranking: below it, the multiple is withheld
+   ("not enough history") rather than shown. Detection was never affected
+   — this was the dashboard flattering itself.
+
+4. **Only 3 of 10 breakouts were ever reported.** The worst one, and the
+   only one that cost real score. The alerter asked "which posts are in
+   BREAKOUT *right now*", but it only runs every 15 minutes and momentum
+   fades faster than that. A post that broke out and cooled in between was
+   never reported at all. Replaying the detector over stored history found
+   10 posts that broke out and 3 alerts — including a post that climbed
+   2.5× to 720K views, unreported. Fixed by asking "did this post *ever*
+   break out", stamped with the moment it actually did. Removed posts were
+   a second, smaller instance of the same mistake: they were excluded from
+   detection along with sampling, though a post that broke out before it
+   came down still broke out.
+
+5. **Half the collected samples were invisible to the detector.**
+   `sim_hours` came from `/me`, which is polled every 30 minutes, while
+   live sampling runs every 15 — so two genuinely different rounds got
+   stamped with the *same* timestamp, and the dedup in bug 1 then
+   collapsed one of them away. 283 stored samples per post were becoming
+   151 usable points: half the resolution the request budget had already
+   paid for, and every breakout confirmed a full round later than the
+   evidence allowed. Fixed by anchoring the sim clock at each heartbeat
+   and interpolating between them using the server's own
+   `clock_multiplier`, which costs no extra requests.
+
+**The lesson:** a detector that passes its own tests can still be silently
+wrong, and the failure mode is always *quiet* — nothing errors, a number
+is just wrong or a report just never happens. The only thing that caught
+any of these was replaying real stored data and asking whether the output
+was defensible.
 
 ---
 
@@ -220,9 +299,21 @@ more useful, and safer, explaining a decision than making one.
 
 ## Known limitations
 
-- Agent session memory is in-process, clears on redeploy/restart
+- **The collector was down for 67 of the window's 168 hours.** Samples
+  stop at sim hour 68.3 and resume at 135.7 — a ~2.8 day hole in the
+  middle of a 7 day run, during which nothing was collected and nothing
+  could have been alerted. It's visible in the data and I'd rather name it
+  than have it found: recall and latency for anything that broke out in
+  that window are simply gone. The restart was manual; the real fix is a
+  liveness check on the collector service, which is the first thing I'd
+  add next.
+- Alerts for breakouts recovered by fix 4 above are **late by
+  construction** — they report the moment the post actually broke out, but
+  they were submitted once the bug was fixed, not when it happened. Recall
+  is recovered; latency for those specific posts isn't.
+- Agent session memory is in-process, clears on redeploy/restart.
 - Relative-ranking calibration hasn't been tuned against a full 7-day
-  dataset, since the window's still open
+  dataset, since the window's still open.
 
 ---
 

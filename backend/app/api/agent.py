@@ -80,8 +80,20 @@ class ChatResponse(BaseModel):
 def _window_progress(sim_hours: float | None) -> str | None:
     if sim_hours is None:
         return None
-    day = min(int(sim_hours // 24) + 1, MONITORING_WINDOW_DAYS)
-    return f"Day {day} of {MONITORING_WINDOW_DAYS}"
+    return f"{_day_label(sim_hours)} of {MONITORING_WINDOW_DAYS}"
+
+
+def _day_label(sim_hours: float | None) -> str | None:
+    """"Day 3" — how a marketer refers to a moment in the tracking window.
+
+    Raw sim hours are an internal coordinate: "sim hour 57.4" means nothing
+    to someone reading the panel, and the model will happily quote any
+    number it's handed. So the payload carries day labels and durations,
+    and never an absolute sim-hour position to echo back.
+    """
+    if sim_hours is None:
+        return None
+    return f"Day {min(int(sim_hours // 24) + 1, MONITORING_WINDOW_DAYS)}"
 
 
 def _evidence_facts(evidence: Any) -> dict[str, Any]:
@@ -93,6 +105,9 @@ def _evidence_facts(evidence: Any) -> dict[str, Any]:
     return {
         "recent_gain_views": evidence.absolute_gain,
         "recent_gain_window_hours": evidence.window_hours,
+        "growth_pct": (
+            round(evidence.relative_growth_pct, 1) if evidence.relative_growth_pct is not None else None
+        ),
         "views_per_hour": round(evidence.velocity, 1),
         "baseline_multiple": (
             round(evidence.creator_pace_ratio, 1) if evidence.creator_pace_ratio is not None else None
@@ -100,6 +115,28 @@ def _evidence_facts(evidence: Any) -> dict[str, Any]:
         "baseline_compared_to": evidence.creator_pace_basis,
         "consecutive_elevated_checks": evidence.consecutive_qualifying_checks,
     }
+
+
+# The shape behind the numbers — recent view readings, for the sparkline on
+# an evidence card. Strictly UI-only: _model_facts() strips these before the
+# payload reaches the model, so a dozen raw view counts per post never widen
+# what the grounding guardrail accepts, and never burn tokens on a list the
+# model has no use for anyway.
+TREND_POINTS = 12
+
+
+def _trend(sample_points: list[SamplePoint]) -> list[int]:
+    return [p.views for p in _dedupe_samples(sample_points)[-TREND_POINTS:]]
+
+
+def _model_facts(facts: Any) -> Any:
+    """The same facts with every UI-only `trend` array removed — what the
+    model actually gets, and what the guardrail grounds its reply against."""
+    if isinstance(facts, dict):
+        return {k: _model_facts(v) for k, v in facts.items() if k != "trend"}
+    if isinstance(facts, list):
+        return [_model_facts(v) for v in facts]
+    return facts
 
 
 def _creator_post_ranking(
@@ -167,17 +204,22 @@ async def build_facts(session: AsyncSession, selected_post_id: str | None) -> di
     submitted_ids = {row.post_id for row in alert_rows if row.submitted}
     posts_by_id = {p.id: p for p in posts}
 
-    alerts = []
+    # Named for what it means to the reader, not for the mechanism behind
+    # it. The manager doesn't think "an alert was POSTed to an endpoint" —
+    # they think "we caught this one, it's on the radar." The model echoes
+    # the vocabulary it's handed, so handing it `alerts`/`submitted` was
+    # itself the reason replies came back talking like a system log.
+    flagged_posts = []
     for row in alert_rows[:MAX_ALERTS]:
         post = posts_by_id.get(row.post_id)
         creator = creators.get(post.creator_id) if post else None
-        alerts.append(
+        flagged_posts.append(
             {
                 "post_id": row.post_id,
                 "creator_handle": creator.handle if creator else "unknown",
                 "caption": post.caption if post else None,
-                "submitted_sim_hour": round(row.decided_sim_hours, 1),
-                "submitted": row.submitted,
+                "flagged_on": _day_label(row.decided_sim_hours),
+                "was_flagged": row.submitted,
                 "status_now": computations[row.post_id].status_label if row.post_id in computations else None,
             }
         )
@@ -200,16 +242,20 @@ async def build_facts(session: AsyncSession, selected_post_id: str | None) -> di
                 "post_id": post.id,
                 "creator_handle": creator.handle if creator else "unknown",
                 "caption": post.caption,
-                "breakout_sim_hour": round(first.sim_hours, 1),
+                "broke_out_on": _day_label(first.sim_hours),
+                # Sort key only — dropped from the payload below so the
+                # model never sees an absolute hour to quote.
+                "_sort_sim_hours": first.sim_hours,
                 "views_at_breakout": at_breakout,
                 "peak_views": peak,
                 "climbed_multiple": round(peak / at_breakout, 1) if at_breakout > 0 else None,
-                "officially_alerted": post.id in submitted_ids,
+                "was_flagged": post.id in submitted_ids,
                 "status_now": comp.status_label,
+                "trend": [p.views for p in points[-TREND_POINTS:]],
             }
         )
-    breakouts.sort(key=lambda b: b["breakout_sim_hour"], reverse=True)
-    breakouts = breakouts[:MAX_BREAKOUTS]
+    breakouts.sort(key=lambda b: b["_sort_sim_hours"], reverse=True)
+    breakouts = [{k: v for k, v in b.items() if k != "_sort_sim_hours"} for b in breakouts[:MAX_BREAKOUTS]]
 
     movers = sorted(
         (p for p in posts if p.status != "gone" and computations[p.id].status_label != _STEADY),
@@ -226,6 +272,7 @@ async def build_facts(session: AsyncSession, selected_post_id: str | None) -> di
                 "creator_handle": creator.handle if creator else "unknown",
                 "caption": post.caption,
                 "status": comp.status_label,
+                "trend": _trend(comp.sample_points),
                 **_evidence_facts(comp.evidence),
             }
         )
@@ -249,9 +296,9 @@ async def build_facts(session: AsyncSession, selected_post_id: str | None) -> di
             "status": comp.status_label,
             "current_views": latest.views if latest else None,
             "post_age_hours": age,
-            "last_update_sim_hour": round(latest.sim_hours, 1) if latest else None,
-            "alert_sent": post.id in submitted_ids,
+            "was_flagged": post.id in submitted_ids,
             "is_available": post.status != "gone",
+            "trend": _trend(comp.sample_points),
             **_evidence_facts(comp.evidence),
             **_creator_post_ranking(post.creator_id, post.id, posts, samples_by_post),
             # This post's own breakout entry (if it ever reached BREAKOUT)
@@ -266,21 +313,65 @@ async def build_facts(session: AsyncSession, selected_post_id: str | None) -> di
             ),
         }
 
-    relevant_handles = {a["creator_handle"] for a in alerts} | {m["creator_handle"] for m in top_movers}
+    relevant_handles = {a["creator_handle"] for a in flagged_posts} | {m["creator_handle"] for m in top_movers}
     if selected:
         relevant_handles.add(selected["creator_handle"])
     creator_breakout_tally = _creator_breakout_tally(breakouts, relevant_handles)
 
+    # Every creator and every post, in compact form. Without this the model
+    # only ever saw the handful of posts that made it into top movers, alerts
+    # or breakouts — so a question about any other creator got a truthful but
+    # useless "I don't have anyone by that handle," about someone the program
+    # is very much watching. It's also what lets the panel cite a reference
+    # card for a creator outside those slices.
+    posts_by_creator: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for post in posts:
+        comp = computations[post.id]
+        latest = comp.latest
+        posts_by_creator[post.creator_id].append(
+            {
+                "post_id": post.id,
+                "caption": post.caption,
+                "status": comp.status_label,
+                "current_views": latest.views if latest else None,
+                "is_available": post.status != "gone",
+                "trend": _trend(comp.sample_points),
+            }
+        )
+
+    roster = []
+    for creator in sorted(creators.values(), key=lambda c: c.handle):
+        own = sorted(
+            posts_by_creator.get(creator.id, []),
+            key=lambda p: p["current_views"] or 0,
+            reverse=True,
+        )
+        status_tally: dict[str, int] = defaultdict(int)
+        for entry in own:
+            status_tally[entry["status"]] += 1
+        roster.append(
+            {
+                "creator_handle": creator.handle,
+                "creator_followers": creator.followers,
+                # Pre-counted: the model is told not to do arithmetic, so a
+                # question as ordinary as "how many posts do they have" has
+                # to be answerable by reading a field, not by counting a list.
+                "post_count": len(own),
+                "status_counts": dict(status_tally),
+                "total_views_now": sum(p["current_views"] or 0 for p in own),
+                "posts": own,
+            }
+        )
+
     return {
+        "creators": roster,
         "program": {
             "posts_watched": len(posts),
             "creators_watched": len(creators),
             "status_counts": status_counts,
-            "last_check_sim_hour": round(current_sim, 1) if current_sim is not None else None,
-            "current_sim_hour": round(current_sim, 1) if current_sim is not None else None,
             "window_progress": _window_progress(current_sim),
         },
-        "alerts": alerts,
+        "flagged_posts": flagged_posts,
         "breakouts": breakouts,
         "selected_post": selected,
         "top_movers": top_movers,
@@ -317,9 +408,9 @@ def offline_answer(facts: dict[str, Any]) -> str:
         if streak >= 2:
             parts.append(f"It has stayed elevated for {streak} checks in a row.")
         parts.append(
-            "An alert has been sent for this post."
-            if selected.get("alert_sent")
-            else "No alert has been sent for this post."
+            "This one is already on your radar — we flagged it."
+            if selected.get("was_flagged")
+            else "It hasn't been flagged yet."
         )
         return " ".join(parts)
 
@@ -328,19 +419,25 @@ def offline_answer(facts: dict[str, Any]) -> str:
     taking_off = counts.get(_TAKING_OFF, 0)
     watching = counts.get(_WORTH_WATCHING, 0)
     breakouts = len(facts["breakouts"])
-    sent = sum(1 for a in facts["alerts"] if a["submitted"])
+    flagged = sum(1 for a in facts["flagged_posts"] if a["was_flagged"])
     breakouts_phrase = f"{breakouts} breakout{'' if breakouts == 1 else 's'}"
-    alerts_phrase = f"{sent} alert{'' if sent == 1 else 's'}"
+    flagged_phrase = f"flagged {flagged} of them"
 
     if taking_off == 0 and watching == 0:
-        return f"Nothing is taking off or worth watching right now. {breakouts_phrase} and {alerts_phrase} so far this window."
+        return (
+            "Nothing is taking off or worth watching at the moment — it's a quiet stretch. "
+            f"Across the window so far we've seen {breakouts_phrase} and {flagged_phrase}."
+        )
 
     bits = []
     if taking_off:
         bits.append(f"{taking_off} taking off")
     if watching:
         bits.append(f"{watching} worth watching")
-    return f"{' and '.join(bits)} right now, out of {breakouts_phrase} and {alerts_phrase} this window."
+    return (
+        f"There's {' and '.join(bits)} right now. "
+        f"Across the window so far we've seen {breakouts_phrase} and {flagged_phrase}."
+    )
 
 
 def deterministic_reasoning(facts: dict[str, Any]) -> str:
@@ -379,20 +476,20 @@ def deterministic_reasoning(facts: dict[str, Any]) -> str:
         else:
             parts.append("The streak is too short to separate real momentum from one good reading.")
 
-        if selected.get("alert_sent"):
-            parts.append("An alert has already gone out, so the window to amplify is now rather than later.")
+        if selected.get("was_flagged"):
+            parts.append("It's already been flagged, so the window to amplify is now rather than later.")
         else:
-            parts.append("No alert has gone out yet, so there's still room to decide before it's obvious.")
+            parts.append("It hasn't been flagged yet, so there's still room to decide before it's obvious.")
         return " ".join(parts)
 
     movers = facts["top_movers"]
     breakouts = facts["breakouts"]
-    sent = sum(1 for a in facts["alerts"] if a["submitted"])
+    flagged = sum(1 for a in facts["flagged_posts"] if a["was_flagged"])
     if not movers:
         return (
             f"Nothing is outpacing its creator's own norm right now, across "
             f"{facts['program']['posts_watched']} tracked posts. That's a quiet program, not a broken one — "
-            f"{len(breakouts)} posts have broken out over the window and {sent} alerts have gone out."
+            f"{len(breakouts)} posts have broken out over the window and {flagged} were flagged."
         )
 
     top = movers[0]
@@ -403,7 +500,7 @@ def deterministic_reasoning(facts: dict[str, Any]) -> str:
     return (
         f"{lead}. {len(movers)} posts in total are running above their own creator's norm, which is the "
         f"comparison to trust when creator sizes differ this much. Across the window {len(breakouts)} posts "
-        f"have broken out and {sent} alerts have gone out — worth weighing before committing spend anywhere."
+        f"have broken out and {flagged} were flagged — worth weighing before committing spend anywhere."
     )
 
 
@@ -435,7 +532,7 @@ async def agent_chat(request: ChatRequest, session: AsyncSession = Depends(get_d
         else request.message
     )
 
-    reply, reasoning = await llm.generate_reply(facts, list(history), prompt)
+    reply, reasoning = await llm.generate_reply(_model_facts(facts), list(history), prompt)
     llm_available = reply is not None
 
     if reply is None:
@@ -464,7 +561,7 @@ async def get_headline(session: AsyncSession = Depends(get_db)) -> HeadlineRespo
     call to render — the deterministic briefing shows immediately and this
     replaces it if and when it arrives."""
     facts = await build_facts(session, None)
-    headline = await llm.generate_headline(facts)
+    headline = await llm.generate_headline(_model_facts(facts))
     return HeadlineResponse(headline=headline, llm_available=headline is not None)
 
 

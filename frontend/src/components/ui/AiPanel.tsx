@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { useSelection } from "../../lib/selection";
 import { useAgentChat, type AgentMessage } from "../../lib/agentChat";
 import { agentReferences, type AgentReference } from "../../lib/copy";
+import { Sparkline } from "../Sparkline";
 import { StatusPill } from "./StatusPill";
 
 interface AiPanelProps {
@@ -20,7 +21,7 @@ const PROGRAM_PROMPTS = [
   "What changed since I checked?",
   "What deserves attention first?",
   "Give me a stakeholder update",
-  "What have we alerted on so far?",
+  "What's proven out this week?",
 ];
 
 // One continuous column, not a chat-plus-side-panel split: each reply
@@ -33,6 +34,10 @@ export function AiPanel({ onClose }: AiPanelProps) {
   const { messages, isSending, send, endChat } = useAgentChat();
   const [input, setInput] = useState("");
   const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
+  // Which turn currently has its reference pile open — at most one, and it
+  // closes on the next ask, so evidence is something you pull up about a
+  // specific answer rather than a wall that accumulates down the thread.
+  const [openRefsFor, setOpenRefsFor] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -47,6 +52,7 @@ export function AiPanel({ onClose }: AiPanelProps) {
 
   function ask(text: string) {
     setPendingPrompt(text);
+    setOpenRefsFor(null);
     void send(text, activePost?.post_id ?? null).finally(() => setPendingPrompt(null));
   }
 
@@ -97,7 +103,18 @@ export function AiPanel({ onClose }: AiPanelProps) {
 
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6 sm:px-10">
         <div className="mx-auto max-w-2xl space-y-5">
-          {messages.length === 0 ? <Intro /> : messages.map((m) => <Turn key={m.id} message={m} />)}
+          {messages.length === 0 ? (
+            <Intro />
+          ) : (
+            messages.map((m) => (
+              <Turn
+                key={m.id}
+                message={m}
+                isRefsOpen={openRefsFor === m.id}
+                onToggleRefs={() => setOpenRefsFor((current) => (current === m.id ? null : m.id))}
+              />
+            ))
+          )}
           {isSending && !pendingPrompt && (
             <div className="flex gap-2.5">
               <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-accent text-[11px] font-medium text-white">
@@ -175,7 +192,15 @@ function Intro() {
 // against the bubble's translucent white and the pastel wash behind
 // everything, so it reads as the one firm surface in the turn: this part
 // is checkable. Turns with nothing to cite render no card at all.
-function Turn({ message }: { message: AgentMessage }) {
+function Turn({
+  message,
+  isRefsOpen,
+  onToggleRefs,
+}: {
+  message: AgentMessage;
+  isRefsOpen: boolean;
+  onToggleRefs: () => void;
+}) {
   if (message.role === "user") {
     return (
       <div className="flex justify-end">
@@ -187,7 +212,6 @@ function Turn({ message }: { message: AgentMessage }) {
   }
 
   const references = agentReferences(message.text, message.factsUsed);
-  const hasEvidence = Boolean(message.reasoning) || references.length > 0;
 
   return (
     <div className="flex gap-2.5">
@@ -198,31 +222,42 @@ function Turn({ message }: { message: AgentMessage }) {
         <div className="rounded-2xl border border-line bg-white/70 px-3.5 py-2.5 text-sm text-ink shadow-[0_1px_2px_rgb(0_0_0_/_4%)]">
           {message.text}
         </div>
-        <p className="flex items-center gap-1.5 pl-0.5 text-[10px] font-medium tracking-wide text-ink-muted">
-          <span className={`h-1 w-1 rounded-full ${message.offline ? "bg-ink-muted/50" : "bg-accent"}`} />
-          {message.offline ? "Offline · from the numbers" : "Live"}
-        </p>
+        {/* The strategic read behind the answer: why this comparison is the
+            one that matters, not a recap of the numbers. Sits between the
+            reply and the evidence it's grounded in — the same order the
+            model is asked to think in. Omitted entirely when the model
+            didn't produce one, rather than showing an empty frame. */}
+        {message.reasoning && (
+          <p className="border-l-2 border-accent/30 pl-3 text-[13px] leading-relaxed text-ink-muted">
+            {message.reasoning}
+          </p>
+        )}
+        <div className="flex items-center gap-2 pl-0.5">
+          <p className="flex items-center gap-1.5 text-[10px] font-medium tracking-wide text-ink-muted">
+            <span className={`h-1 w-1 rounded-full ${message.offline ? "bg-ink-muted/50" : "bg-accent"}`} />
+            {message.offline ? "Offline · from the numbers" : "Live"}
+          </p>
+          {references.length > 0 && (
+            <button
+              type="button"
+              onClick={onToggleRefs}
+              aria-expanded={isRefsOpen}
+              className="rounded-full border border-line/70 px-2.5 py-0.5 text-[10px] font-medium tracking-wide text-ink-muted transition-colors hover:border-accent/40 hover:text-accent"
+            >
+              {isRefsOpen ? "Hide" : "View"} {references.length} reference
+              {references.length === 1 ? "" : "s"}
+            </button>
+          )}
+        </div>
 
-        {hasEvidence && (
-          <div className="rounded-2xl border border-line bg-white p-4 sm:p-5">
-            {message.reasoning && (
-              <div>
-                <p className="text-[10px] font-medium tracking-wider text-ink-muted uppercase">
-                  Why
-                </p>
-                <p className="mt-1 text-sm leading-relaxed text-ink">{message.reasoning}</p>
-              </div>
-            )}
-            {references.length > 0 && (
-              <div className={message.reasoning ? "mt-4 space-y-2 border-t border-line pt-3" : "space-y-2"}>
-                <p className="text-[10px] font-medium tracking-wider text-ink-muted uppercase">
-                  Sources
-                </p>
-                {references.map((reference) => (
-                  <ReferenceCard key={reference.handle} reference={reference} />
-                ))}
-              </div>
-            )}
+        {/* The pile: the actual posts this answer drew on, each a link to
+            the post itself. Deliberately lighter than the reply bubble above
+            it — this is the backing material, not the answer. */}
+        {isRefsOpen && references.length > 0 && (
+          <div className="space-y-1.5 pt-0.5">
+            {references.map((reference) => (
+              <ReferenceCard key={reference.handle} reference={reference} />
+            ))}
           </div>
         )}
       </div>
@@ -236,6 +271,13 @@ function ReferenceCard({ reference }: { reference: AgentReference }) {
       <div className="flex items-center gap-2">
         <span className="truncate text-sm font-medium text-ink">@{reference.handle}</span>
         {reference.status && <StatusPill label={reference.status} />}
+        {/* The trend line sits on the header row, right-aligned: the shape
+            of what happened, next to the name it happened to. */}
+        {reference.trend.length >= 2 && (
+          <span className="ml-auto shrink-0 text-accent">
+            <Sparkline values={reference.trend} width={64} height={20} />
+          </span>
+        )}
       </div>
       {reference.caption && (
         <p className="mt-0.5 truncate text-xs text-ink-muted">"{reference.caption}"</p>
@@ -256,12 +298,12 @@ function ReferenceCard({ reference }: { reference: AgentReference }) {
   );
 
   if (!reference.postId) {
-    return <div className="rounded-xl border border-line bg-[#faf9f8] p-3">{body}</div>;
+    return <div className="rounded-xl border border-line/60 bg-white/35 p-3">{body}</div>;
   }
   return (
     <Link
       to={`/posts/${reference.postId}`}
-      className="block rounded-xl border border-line bg-[#faf9f8] p-3 transition-colors hover:border-ink/20 hover:bg-white"
+      className="block rounded-xl border border-line/60 bg-white/35 p-3 transition-colors hover:border-ink/20 hover:bg-white"
     >
       {body}
     </Link>

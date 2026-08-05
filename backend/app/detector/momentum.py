@@ -9,6 +9,14 @@ from dataclasses import dataclass
 
 from app.detector import config
 
+# Why an interval failed to qualify. Named rather than inlined as string
+# literals because the presentation layer reads them too — the dashboard's
+# "is this comparison worth trusting" gate gets to reuse the detector's own
+# definition of "enough movement to be worth talking about" instead of
+# inventing a second, silently-diverging threshold.
+GATE_BELOW_VOLUME_FLOOR = "below_volume_floor"
+GATE_WEAK_MOMENTUM = "weak_normalized_momentum"
+
 
 @dataclass(frozen=True)
 class SamplePoint:
@@ -115,9 +123,9 @@ def compute_interval_signals(samples: list[SamplePoint], followers: int) -> list
         )
 
         if not volume_ok:
-            gate_reason = "below_volume_floor"
+            gate_reason = GATE_BELOW_VOLUME_FLOOR
         elif score < config.WATCH_SCORE_THRESHOLD:
-            gate_reason = "weak_normalized_momentum"
+            gate_reason = GATE_WEAK_MOMENTUM
         else:
             gate_reason = None
 

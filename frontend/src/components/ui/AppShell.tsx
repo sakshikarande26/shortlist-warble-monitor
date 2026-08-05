@@ -18,7 +18,11 @@ export function AppShell() {
       <TopBar />
 
       <div className="flex min-h-0 flex-1 overflow-hidden rounded-3xl border border-line bg-board shadow-[0_20px_60px_rgb(0_0_0_/_10%)] backdrop-blur-[24px]">
-        <Nav onOpenAgent={() => setIsAgentOpen(true)} onNavigate={() => setIsAgentOpen(false)} />
+        <Nav
+          isAgentOpen={isAgentOpen}
+          onOpenAgent={() => setIsAgentOpen(true)}
+          onNavigate={() => setIsAgentOpen(false)}
+        />
         {isAgentOpen ? (
           <AiPanel onClose={() => setIsAgentOpen(false)} />
         ) : (

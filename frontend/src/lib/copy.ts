@@ -250,8 +250,8 @@ export function formatViews(views: number): string {
 /** 7 matches the sim's fixed monitoring window (CLAUDE.md) — mirrors
  * backend/app/api/agent.py's _window_progress so "Day X of 7" never
  * disagrees between the teammate panel and the home screen. Exported so
- * every sim-hours-to-day bucketing on the frontend (BreakoutTrendChart
- * included) uses this one formula instead of each re-deriving it. */
+ * every sim-hours-to-day bucketing on the frontend uses this one formula
+ * instead of each re-deriving it. */
 export const MONITORING_WINDOW_DAYS = 7;
 
 export function dayBucket(simHours: number): number {
@@ -406,10 +406,10 @@ export function agentEvidenceChips(factsUsed: Record<string, unknown> | undefine
   if (breakouts && breakouts.length > 0) {
     chips.push(`${breakouts.length} breakouts`);
   }
-  const alerts = factsUsed.alerts as { submitted?: boolean }[] | undefined;
-  const sentAlerts = alerts?.filter((a) => a.submitted).length ?? 0;
-  if (sentAlerts > 0) {
-    chips.push(`${sentAlerts} alerts sent`);
+  const flagged = factsUsed.flagged_posts as { was_flagged?: boolean }[] | undefined;
+  const flaggedCount = flagged?.filter((a) => a.was_flagged).length ?? 0;
+  if (flaggedCount > 0) {
+    chips.push(`${flaggedCount} flagged`);
   }
   return chips;
 }
@@ -422,6 +422,9 @@ export interface AgentReference {
   caption: string | null;
   status: string | null;
   facts: string[];
+  /** Recent view readings, for the card's trend line. Empty when this
+   * entity carries no history to draw (the card then just shows chips). */
+  trend: number[];
 }
 
 /** The union of every post-shaped entity build_facts() emits (selected
@@ -441,7 +444,9 @@ interface AgentFactsEntity {
   views_per_hour?: number | null;
   recent_gain_views?: number | null;
   recent_gain_window_hours?: number | null;
+  growth_pct?: number | null;
   baseline_multiple?: number | null;
+  trend?: number[] | null;
   consecutive_elevated_checks?: number | null;
   is_creators_best_so_far?: boolean | null;
   rank_among_creators_posts?: number | null;
@@ -450,14 +455,22 @@ interface AgentFactsEntity {
   peak_views?: number | null;
   views_at_breakout?: number | null;
   breakout_sim_hour?: number | null;
-  submitted?: boolean;
-  submitted_sim_hour?: number | null;
+  was_flagged?: boolean;
+  flagged_on?: string | null;
 }
 
 // Every chip is a distinct number pulled straight from the entity — no two
 // chips ever restate the same fact in different words, and which fields are
 // present (selected post vs. mover vs. alert vs. breakout row) naturally
 // varies which chips show up, so cards don't all read the same shape.
+/** One creator in the full roster the agent now receives: the creator, plus
+ * every post of theirs in compact form. */
+interface AgentFactsRosterEntry {
+  creator_handle?: string;
+  creator_followers?: number | null;
+  posts?: AgentFactsEntity[];
+}
+
 function toReference(entity: AgentFactsEntity): AgentReference {
   const facts: string[] = [];
   if (entity.current_views != null) facts.push(`${formatViews(entity.current_views)} now`);
@@ -469,6 +482,9 @@ function toReference(entity: AgentFactsEntity): AgentReference {
         ? `${gain} in ${formatWindow(entity.recent_gain_window_hours)}`
         : `${gain} views`,
     );
+  }
+  if (entity.growth_pct != null) {
+    facts.push(`${entity.growth_pct > 0 ? "+" : ""}${entity.growth_pct.toFixed(1)}%`);
   }
   if (entity.baseline_multiple != null) facts.push(`${entity.baseline_multiple.toFixed(1)}× baseline`);
   if (entity.consecutive_elevated_checks != null && entity.consecutive_elevated_checks >= 2) {
@@ -484,12 +500,12 @@ function toReference(entity: AgentFactsEntity): AgentReference {
   else if (entity.views_at_breakout != null) facts.push(`${formatViews(entity.views_at_breakout)} at breakout`);
   if (entity.post_age_hours != null) facts.push(`${formatWindow(entity.post_age_hours)} old`);
   if (entity.creator_followers != null) facts.push(`${formatViews(entity.creator_followers)} followers`);
-  if (entity.submitted === true) {
-    facts.push(
-      entity.submitted_sim_hour != null ? `Alert sent at hour ${entity.submitted_sim_hour}` : "Alert sent",
-    );
-  } else if (entity.submitted === false) {
-    facts.push("No alert sent");
+  // Marketer's framing, not the system's: they think "we caught this,"
+  // not "an alert was POSTed." Same underlying fact, their vocabulary.
+  if (entity.was_flagged === true) {
+    facts.push(entity.flagged_on ? `Flagged ${entity.flagged_on}` : "Flagged");
+  } else if (entity.was_flagged === false) {
+    facts.push("Not flagged yet");
   }
   if (entity.is_available === false) facts.push("No longer available");
 
@@ -499,6 +515,7 @@ function toReference(entity: AgentFactsEntity): AgentReference {
     caption: entity.caption ?? null,
     status: entity.status ?? entity.status_now ?? null,
     facts,
+    trend: entity.trend ?? [],
   };
 }
 
@@ -518,12 +535,32 @@ export function agentReferences(
 
   const selected = factsUsed.selected_post as AgentFactsEntity | null | undefined;
   const movers = (factsUsed.top_movers as AgentFactsEntity[] | undefined) ?? [];
-  const alerts = (factsUsed.alerts as AgentFactsEntity[] | undefined) ?? [];
+  const flaggedPosts = (factsUsed.flagged_posts as AgentFactsEntity[] | undefined) ?? [];
   const breakouts = (factsUsed.breakouts as AgentFactsEntity[] | undefined) ?? [];
 
+  // The roster's best post per creator, flattened — the fallback that lets a
+  // reply about any creator in the program cite a card, not just one who
+  // happened to make the movers/alerts/breakouts slices. Last in priority
+  // because it carries fewer numbers than those richer sections.
+  const roster = (factsUsed.creators as AgentFactsRosterEntry[] | undefined) ?? [];
+  const rosterEntities: AgentFactsEntity[] = roster.flatMap((entry) =>
+    (entry.posts ?? []).map((post) => ({
+      ...post,
+      creator_handle: entry.creator_handle,
+      creator_followers: entry.creator_followers,
+    })),
+  );
+
   // Priority order: the post the manager is actually looking at, then the
-  // movers (richest live numbers), then alert/breakout history.
-  const pool: AgentFactsEntity[] = [...(selected ? [selected] : []), ...movers, ...alerts, ...breakouts];
+  // movers (richest live numbers), then what's already been flagged and the
+  // breakout history, then the wider roster.
+  const pool: AgentFactsEntity[] = [
+    ...(selected ? [selected] : []),
+    ...movers,
+    ...flaggedPosts,
+    ...breakouts,
+    ...rosterEntities,
+  ];
 
   const seen = new Set<string>();
   const references: AgentReference[] = [];
@@ -553,9 +590,9 @@ export function agentProgramContext(factsUsed: Record<string, unknown> | undefin
   if (program?.creators_watched != null) parts.push(`${program.creators_watched} creators`);
   const breakouts = factsUsed.breakouts as unknown[] | undefined;
   if (breakouts?.length) parts.push(`${breakouts.length} breakouts`);
-  const alerts = factsUsed.alerts as { submitted?: boolean }[] | undefined;
-  const sent = alerts?.filter((a) => a.submitted).length ?? 0;
-  if (sent > 0) parts.push(`${sent} alerts sent`);
+  const flagged = factsUsed.flagged_posts as { was_flagged?: boolean }[] | undefined;
+  const flaggedCount = flagged?.filter((a) => a.was_flagged).length ?? 0;
+  if (flaggedCount > 0) parts.push(`${flaggedCount} flagged`);
 
   return parts.length > 0 ? parts.join(" · ") : null;
 }

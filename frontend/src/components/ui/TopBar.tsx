@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getStatus } from "../../lib/api";
+import { invalidateCache } from "../../lib/dataCache";
 import { RefreshIcon } from "./NavIcons";
 
 const TICK_MS = 30_000; // coarse — this is a UI-freshness hint, not a stopwatch
@@ -43,6 +44,10 @@ export function TopBar() {
         <button
           type="button"
           onClick={() => {
+            // Drop every cached page, then reload — otherwise the reboot
+            // would repopulate from the same stale entries and "Refresh"
+            // would be a no-op.
+            invalidateCache();
             refresh();
             window.location.reload();
           }}

@@ -151,4 +151,34 @@ async def test_sync_alerts_preserves_first_decided_sim_hours():
         row = await session.get(AlertRow, "wp_0000000001")
     assert alerted == {"wp_0000000001"}
     assert row.decided_sim_hours == 5.0  # first decision stands
+    # NOT a duplicate: this is startup reconciliation reading back an alert
+    # we ourselves sent, not the API telling us we sent one twice. Flagging
+    # it here marked all three real alerts in the live DB as duplicates,
+    # which is not what the field means.
+    assert row.is_duplicate is False
+    # The server's receipt details still get backfilled onto our row.
+    assert row.received_sim_hours == 3.0
+
+
+@pytest.mark.asyncio
+async def test_api_reported_duplicate_does_set_the_flag():
+    """The flag still means what it says when the API actually says it."""
+    async with get_session() as session:
+        await dao.upsert_creator(
+            session, id="wc_0000000001", handle="h", name="n", platform="p",
+            followers=0, fetched_at_sim_hours=0.0,
+        )
+        await dao.upsert_post(
+            session, id="wp_0000000001", creator_id="wc_0000000001",
+            platform="p", first_seen_sim_hours=0.0,
+        )
+        await dao.record_alert(session, post_id="wp_0000000001", decided_sim_hours=5.0)
+        await dao.record_alert(
+            session, post_id="wp_0000000001", decided_sim_hours=9.0,
+            api_reported_duplicate=True,
+        )
+        await session.commit()
+        row = await session.get(AlertRow, "wp_0000000001")
+
     assert row.is_duplicate is True
+    assert row.decided_sim_hours == 5.0  # first timestamp is still final

@@ -135,7 +135,23 @@ async def mark_post_gone(session: AsyncSession, *, post_id: str, sim_hours: floa
 
 
 async def get_watchlist_post_ids(session: AsyncSession) -> list[str]:
+    """Posts still worth spending live-sampling requests on. Excludes removed
+    posts on purpose — polling a post that's been taken down burns budget for
+    a reading that will never change again."""
     result = await session.execute(select(Post.id).where(Post.status == "active"))
+    return list(result.scalars().all())
+
+
+async def get_all_post_ids(session: AsyncSession) -> list[str]:
+    """Every post we've ever tracked, removed ones included — the right scope
+    for DETECTION, as opposed to the sampling watchlist above.
+
+    A post that broke out and was then taken down still broke out, and the
+    brand still needed to hear about it. Scoping the breakout sweep to the
+    active watchlist meant a removed post's breakout could never be reported,
+    even though its full history is sitting in the samples table.
+    """
+    result = await session.execute(select(Post.id))
     return list(result.scalars().all())
 
 
@@ -168,7 +184,15 @@ async def record_alert(
         )
         session.add(alert)
     else:
-        alert.is_duplicate = True
+        # Only the API's own verdict sets this. Marking it True on any
+        # second write made every alert we fired ourselves look like a
+        # duplicate the moment startup reconciliation (sampler.sync_alerts)
+        # read it back from the server — all three real alerts in the live
+        # DB were flagged that way, which is simply not what the field
+        # means. Re-recording a known alert is reconciliation, not a
+        # duplicate submission.
+        if api_reported_duplicate:
+            alert.is_duplicate = True
         if alert.received_sim_hours is None and received_sim_hours is not None:
             alert.received_sim_hours = received_sim_hours
         if alert.received_at is None and received_at is not None:

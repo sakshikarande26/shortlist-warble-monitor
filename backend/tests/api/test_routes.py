@@ -367,6 +367,59 @@ async def test_creator_pace_ratio_never_fabricated_on_degenerate_baseline():
 
 
 @pytest.mark.asyncio
+async def test_trivial_gain_is_never_sold_as_momentum():
+    """Reproduces a real bug found against live production data: post
+    wp_a0c3161228 gained FOUR views in half an hour, and came back labelled
+    "Worth watching" at 8.4x pace — ranked #1 on the momentum board — while
+    the detector had already gated that same interval out as
+    below_volume_floor. A near-flat baseline divided into a trivial gain
+    makes a big, precise-looking, meaningless multiple.
+
+    The comparative ratio must be withheld ("not enough history") whenever
+    the movement behind it didn't clear the detector's own volume floor.
+    """
+    await _seed_creator()
+    await _seed_post("wp_trivial")
+    # Long flat run, then a 4-view "gain" — exactly the live shape.
+    await _insert_samples(
+        "wp_trivial",
+        [(0.0, 3254), (1.0, 3254), (2.0, 3254), (3.0, 3340), (4.0, 3340), (4.5, 3344)],
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        detail = (await client.get("/api/posts/wp_trivial")).json()
+
+    assert detail["evidence"]["absolute_gain"] == 4
+    assert detail["evidence"]["creator_pace_ratio"] is None
+    assert detail["evidence"]["creator_pace_basis"] is None
+    assert detail["status_label"] == "Steady"
+
+    # And it must not be ranked above posts with real movement on the board.
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        board = (await client.get("/api/posts")).json()
+    ranked_ids = [p["post_id"] for p in board["posts"]]
+    assert ranked_ids[-1] == "wp_trivial"
+
+
+@pytest.mark.asyncio
+async def test_real_gain_still_gets_a_comparative_ratio():
+    """The guard above must not swallow genuine movement — a post clearing
+    the volume floor still gets its comparative read."""
+    await _seed_creator()
+    await _seed_post("wp_real")
+    await _insert_samples(
+        "wp_real",
+        [(0.0, 1000), (1.0, 1200), (2.0, 1500), (3.0, 3000), (4.0, 8000)],
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        detail = (await client.get("/api/posts/wp_real")).json()
+
+    assert detail["evidence"]["absolute_gain"] >= 500
+    assert detail["evidence"]["creator_pace_ratio"] is not None
+
+
+@pytest.mark.asyncio
 async def test_post_detail_dedupes_trajectory_and_has_evidence():
     await _seed_creator(followers=10_000)
     await _seed_post("wp_0000000003")

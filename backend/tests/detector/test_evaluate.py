@@ -1,4 +1,8 @@
-from app.detector.evaluate import evaluate_post
+import pytest
+
+from app.db import dao
+from app.db.base import get_session
+from app.detector.evaluate import evaluate_post, evaluate_post_history, find_breakouts
 from app.detector.momentum import SamplePoint
 
 
@@ -106,6 +110,88 @@ def test_real_large_post_trajectory_reaches_breakout_during_the_climb():
 
     assert result.state == "BREAKOUT"
     assert result.reason == "sustained_growth_breakout"
+
+
+# --- "did it EVER break out" vs "is it in BREAKOUT right now" -----------
+# The distinction these cover is the one that cost real recall: 7 of 10
+# posts that broke out during a live run were never reported, because by
+# the time the next tick evaluated them their momentum had already faded
+# and the alerter was only looking at the current state.
+
+_BREAKS_OUT_THEN_COOLS = [2000, 3000, 4500, 6750, 10125, 15187, 15190, 15192, 15194]
+
+
+def test_cooled_off_post_still_reports_the_breakout_that_happened():
+    history = evaluate_post_history(pts(_BREAKS_OUT_THEN_COOLS), followers=10_000)
+
+    # It is emphatically not in breakout any more...
+    assert history.current.state != "BREAKOUT"
+    # ...but it did break out, and we can still say exactly when.
+    assert history.first_breakout is not None
+    assert history.first_breakout.state == "BREAKOUT"
+    assert history.first_breakout.reason == "sustained_growth_breakout"
+    assert history.first_breakout.sim_hours == 4.0  # the climb, not the flat tail
+
+
+def test_first_breakout_is_the_first_one_not_the_latest():
+    # Breaks out, cools, then breaks out again. The moment that matters for
+    # the alert record is the FIRST crossing — that's when the brand needed
+    # to know, and the API treats the first timestamp as final anyway.
+    views = [2000, 3000, 4500, 6750, 10125, 15187, 15190, 20000, 30000, 45000, 67500]
+    history = evaluate_post_history(pts(views), followers=10_000)
+    assert history.first_breakout is not None
+    assert history.first_breakout.sim_hours == 4.0
+
+
+def test_post_that_never_broke_out_reports_no_breakout():
+    history = evaluate_post_history(pts([1000, 1005, 1010, 1015, 1020]), followers=10_000)
+    assert history.first_breakout is None
+
+
+def test_evaluate_post_still_returns_the_current_read():
+    # The dashboard's question is unchanged by any of the above.
+    assert evaluate_post(pts(_BREAKS_OUT_THEN_COOLS), followers=10_000).state == (
+        evaluate_post_history(pts(_BREAKS_OUT_THEN_COOLS), followers=10_000).current.state
+    )
+
+
+async def _seed(post_id: str, views: list[int], followers: int = 10_000) -> None:
+    async with get_session() as session:
+        await dao.upsert_creator(
+            session, id="wc_0000000001", handle="h", name="n", platform="p",
+            followers=followers, fetched_at_sim_hours=0.0,
+        )
+        await dao.upsert_post(
+            session, id=post_id, creator_id="wc_0000000001",
+            platform="p", first_seen_sim_hours=0.0,
+        )
+        for i, v in enumerate(views):
+            await dao.insert_sample(
+                session, post_id=post_id, views=v, likes=0, comments=0,
+                metrics_at="2026-07-06T00:00:00.000Z", sim_hours=float(i), source="live",
+            )
+        await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_find_breakouts_includes_a_post_that_has_since_cooled():
+    await _seed("wp_0000000001", _BREAKS_OUT_THEN_COOLS)
+
+    async with get_session() as session:
+        found = await find_breakouts(session, ["wp_0000000001"])
+
+    assert "wp_0000000001" in found
+    assert found["wp_0000000001"].sim_hours == 4.0
+
+
+@pytest.mark.asyncio
+async def test_find_breakouts_excludes_a_post_that_never_broke_out():
+    await _seed("wp_0000000002", [1000, 1005, 1010, 1015, 1020])
+
+    async with get_session() as session:
+        found = await find_breakouts(session, ["wp_0000000002"])
+
+    assert found == {}
 
 
 def test_follower_normalization_changes_outcome_for_identical_trajectory():

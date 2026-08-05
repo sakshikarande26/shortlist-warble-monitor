@@ -1,8 +1,7 @@
 import { Link } from "react-router-dom";
-import { useCallback, useEffect, useState } from "react";
-import { ApiError, getPostsBoard } from "../lib/api";
+import { getPostsBoard } from "../lib/api";
 import type { HomePost, PostsBoardResponse } from "../lib/types";
-import type { LoadState } from "../lib/loadState";
+import { useCachedResource } from "../lib/dataCache";
 import { formatRelativeSimTime, gainColumn, getInitials, paceColumn } from "../lib/copy";
 import { Sparkline } from "../components/Sparkline";
 import { SkeletonCard, SkeletonLine } from "../components/states/Skeleton";
@@ -17,21 +16,11 @@ import { StatusPill, statusTextColorClass } from "../components/ui/StatusPill";
 // discipline as Home's triage sections). Home only ever shows a capped
 // set of highlights; this is the complete working set behind it.
 export function PostsBoard() {
-  const [state, setState] = useState<LoadState<PostsBoardResponse>>({ status: "loading" });
-
-  const load = useCallback(() => {
-    setState({ status: "loading" });
-    getPostsBoard()
-      .then((data) => setState({ status: "ready", data }))
-      .catch((error: unknown) => {
-        const message = error instanceof ApiError ? error.message : "Couldn't load the board.";
-        setState({ status: "error", message });
-      });
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  const { state, refresh } = useCachedResource<PostsBoardResponse>(
+    "posts-board",
+    getPostsBoard,
+    "Couldn't load the board.",
+  );
 
   return (
     <div className="space-y-6">
@@ -45,7 +34,7 @@ export function PostsBoard() {
       </div>
 
       {state.status === "loading" && <BoardSkeleton />}
-      {state.status === "error" && <ErrorState message={state.message} onRetry={load} />}
+      {state.status === "error" && <ErrorState message={state.message} onRetry={refresh} />}
       {state.status === "ready" &&
         (state.data.posts.length === 0 ? (
           <EmptyState

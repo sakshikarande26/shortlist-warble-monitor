@@ -31,11 +31,21 @@ if settings.database_url.startswith("postgresql"):
 # asyncpg.exceptions.InterfaceError: connection is closed). pool_recycle
 # proactively retires connections before the pooler's own idle timeout is
 # likely to hit, on top of the reactive check.
+# Supabase's session-mode pooler caps the whole project at 15 clients, and
+# more than one process shares it (collector + web API, each locally and on
+# Railway). SQLAlchemy's defaults — pool_size 5 plus max_overflow 10 — let a
+# single process claim all 15 on its own, which is exactly how the collector
+# started dying with "max clients reached in session mode". Capping each
+# process at 5 (3 + 2 burst) leaves room for the others; pool_timeout makes a
+# busy moment wait for a free connection instead of raising.
 engine = create_async_engine(
     settings.database_url,
     connect_args=_connect_args,
     pool_pre_ping=True,
     pool_recycle=300,
+    pool_size=3,
+    max_overflow=2,
+    pool_timeout=30,
 )
 
 async_session_factory = async_sessionmaker(engine, expire_on_commit=False)

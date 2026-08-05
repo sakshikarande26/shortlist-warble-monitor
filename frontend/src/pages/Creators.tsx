@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { ApiError, getCreators } from "../lib/api";
+import { getCreators } from "../lib/api";
 import type { CreatorRosterEntry, CreatorsResponse } from "../lib/types";
 import { formatFollowers, formatRelativeSimTime, getInitials, performanceStatement } from "../lib/copy";
-import type { LoadState } from "../lib/loadState";
+import { useCachedResource } from "../lib/dataCache";
 import { SkeletonCard, SkeletonLine } from "../components/states/Skeleton";
 import { EmptyState } from "../components/states/EmptyState";
 import { ErrorState } from "../components/states/ErrorState";
@@ -34,23 +34,13 @@ function matchesFilter(creator: CreatorRosterEntry, filter: Filter): boolean {
 }
 
 export function Creators() {
-  const [state, setState] = useState<LoadState<CreatorsResponse>>({ status: "loading" });
+  const { state, refresh } = useCachedResource<CreatorsResponse>(
+    "creators",
+    getCreators,
+    "Couldn't load creators.",
+  );
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
-
-  const load = useCallback(() => {
-    setState({ status: "loading" });
-    getCreators()
-      .then((data) => setState({ status: "ready", data }))
-      .catch((error: unknown) => {
-        const message = error instanceof ApiError ? error.message : "Couldn't load creators.";
-        setState({ status: "error", message });
-      });
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
 
   const needingAttentionCount =
     state.status === "ready" ? state.data.creators.filter((c) => c.needs_attention_count > 0).length : 0;
@@ -110,7 +100,7 @@ export function Creators() {
       )}
 
       {state.status === "loading" && <CreatorsSkeleton />}
-      {state.status === "error" && <ErrorState message={state.message} onRetry={load} />}
+      {state.status === "error" && <ErrorState message={state.message} onRetry={refresh} />}
       {state.status === "ready" && (
         <CreatorsList creators={filtered} currentSimHours={state.data.current_sim_hours} empty={state.data.creators.length === 0} />
       )}

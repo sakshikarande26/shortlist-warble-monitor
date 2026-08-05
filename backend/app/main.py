@@ -9,7 +9,7 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -96,6 +96,13 @@ if (_FRONTEND_DIST / "index.html").is_file():
 
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str) -> FileResponse:
+        # An unknown /api/* path is a client calling an endpoint that
+        # doesn't exist — it must say so. Without this it fell through to
+        # the SPA catch-all and got 200 OK with a page of HTML, which a
+        # fetch() then failed to parse as JSON. A 404 is the honest answer
+        # and much easier to debug than "why is my JSON an HTML document".
+        if full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail=f"no such endpoint: /{full_path}")
         candidate = (_FRONTEND_DIST / full_path).resolve()
         # Only serve real files that are actually inside the dist directory;
         # anything else is a client-side route and gets the app shell.

@@ -44,10 +44,10 @@ async def _chat(message: str = "what changed?", session_id: str = "s1", post_id:
     return response.json()
 
 
-def _fake_reply(text: str):
+def _fake_reply(text: str, stop_reason: str = "end_turn"):
     """Mimics the shape of an Anthropic messages.create() response."""
     block = type("Block", (), {"type": "text", "text": text})()
-    return type("Response", (), {"content": [block]})()
+    return type("Response", (), {"content": [block], "stop_reason": stop_reason})()
 
 
 @pytest.fixture(autouse=True)
@@ -212,6 +212,72 @@ async def test_reply_contradicting_status_is_rejected(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_truncated_reply_is_not_shown(monkeypatch):
+    """A reply that hit the token ceiling is cut off mid-sentence. Half a
+    strategic read is worse than none — the deterministic fallback ends."""
+    await _seed()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+
+    with patch("app.api.llm.AsyncAnthropic") as client_cls:
+        client_cls.return_value.messages.create = AsyncMock(
+            return_value=_fake_reply(
+                "ANSWER: Momentum held.\nREASONING: The comparison that matters is the shape of",
+                stop_reason="max_tokens",
+            )
+        )
+        body = await _chat(post_id="wp_a")
+
+    assert body["llm_available"] is False
+    assert "the shape of" not in body["text"]
+
+
+def test_status_check_allows_naming_other_statuses_when_comparing():
+    """Real false positive: asked "how does this compare to the rest of the
+    program?", a correct answer names the selected post's real status AND
+    other posts' statuses. The old whole-reply check rejected it for
+    mentioning a second label at all, degrading a good live reply to the
+    offline fallback."""
+    facts = {"selected_post": {"status": "Steady", "creator_handle": "jordan"}}
+
+    assert llm._status_is_consistent(
+        "This one is steady now. Across the rest of the program, 12 posts are worth watching.",
+        facts,
+    )
+    assert llm._status_is_consistent(
+        "It's steady. @amara's post is taking off, though.", facts
+    )
+
+
+def test_status_check_still_rejects_relabelling_the_selected_post():
+    """The guarantee that actually matters must survive the scoping fix."""
+    facts = {"selected_post": {"status": "Steady", "creator_handle": "jordan"}}
+
+    assert not llm._status_is_consistent("This one is taking off and worth a boost.", facts)
+    assert not llm._status_is_consistent("Worth watching, definitely.", facts)
+
+
+def test_leaked_field_names_are_humanised_not_quoted():
+    """The model occasionally quotes a JSON key at the reader. Cosmetic, so
+    it's rewritten rather than rejected — losing a correct answer to the
+    terse offline fallback over spelling would be the worse trade."""
+    assert (
+        llm._despecify_field_names("That's the highest post_count in the roster.")
+        == "That's the highest post count in the roster."
+    )
+    assert (
+        llm._despecify_field_names("Zero recent_gain_views and no consecutive_elevated_checks.")
+        == "Zero recent gain views and no consecutive elevated checks."
+    )
+
+
+def test_post_ids_are_never_mangled_by_the_field_name_rewrite():
+    """Ids contain underscores too. A general snake_case rule would turn
+    wp_7555c0d8c7 into "wp 7555c0d8c7" and corrupt a real identifier."""
+    text = "Post wp_7555c0d8c7 from creator wc_a94a65edfc is flat."
+    assert llm._despecify_field_names(text) == text
+
+
+@pytest.mark.asyncio
 async def test_session_memory_accumulates_and_clears(_no_llm_key):
     await _seed()
 
@@ -274,9 +340,9 @@ def test_offline_answer_is_grounded_and_honest_for_selected_post():
         "baseline_multiple": 2.4,
         "baseline_compared_to": "creator",
         "consecutive_elevated_checks": 3,
-        "alert_sent": False,
+        "was_flagged": False,
     }
-    facts = {"selected_post": selected, "program": {}, "alerts": [], "breakouts": [], "top_movers": []}
+    facts = {"selected_post": selected, "program": {}, "flagged_posts": [], "breakouts": [], "top_movers": []}
     text = agent.offline_answer(facts)
     assert "@a" in text
     assert "taking off" in text.lower()
@@ -290,9 +356,9 @@ def test_offline_answer_is_grounded_and_honest_for_program():
             "status_counts": {"Taking off": 1, "Worth watching": 2, "Steady": 6, "Unavailable": 1},
             "window_progress": "Day 2 of 7",
         },
-        "alerts": [{"post_id": "wp_a", "creator_handle": "a", "submitted": True}],
+        "flagged_posts": [{"post_id": "wp_a", "creator_handle": "a", "was_flagged": True}],
         "breakouts": [
-            {"post_id": "wp_a", "creator_handle": "a", "climbed_multiple": 3.2, "officially_alerted": True},
+            {"post_id": "wp_a", "creator_handle": "a", "climbed_multiple": 3.2, "was_flagged": True},
         ],
         "selected_post": None,
         "top_movers": [{"creator_handle": "b", "status": "Worth watching", "baseline_multiple": 2.1}],
@@ -304,4 +370,6 @@ def test_offline_answer_is_grounded_and_honest_for_program():
     assert "1 taking off" in text
     assert "2 worth watching" in text
     assert "1 breakouts" in text or "1 breakout" in text
-    assert "1 alerts" in text or "1 alert" in text
+    # Marketer's vocabulary, never the system's — no "alert" anywhere.
+    assert "flagged 1 of them" in text
+    assert "alert" not in text.lower()

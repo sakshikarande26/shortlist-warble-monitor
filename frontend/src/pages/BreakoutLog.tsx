@@ -1,29 +1,18 @@
-import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { ApiError, getBreakoutLog } from "../lib/api";
+import { getBreakoutLog } from "../lib/api";
 import type { BreakoutLogEntry, BreakoutLogResponse } from "../lib/types";
 import { formatMoment, formatViews } from "../lib/copy";
-import type { LoadState } from "../lib/loadState";
+import { useCachedResource } from "../lib/dataCache";
 import { SkeletonCard, SkeletonLine } from "../components/states/Skeleton";
 import { EmptyState } from "../components/states/EmptyState";
 import { ErrorState } from "../components/states/ErrorState";
 
 export function BreakoutLog() {
-  const [state, setState] = useState<LoadState<BreakoutLogResponse>>({ status: "loading" });
-
-  const load = useCallback(() => {
-    setState({ status: "loading" });
-    getBreakoutLog()
-      .then((data) => setState({ status: "ready", data }))
-      .catch((error: unknown) => {
-        const message = error instanceof ApiError ? error.message : "Couldn't load breakouts.";
-        setState({ status: "error", message });
-      });
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  const { state, refresh } = useCachedResource<BreakoutLogResponse>(
+    "breakouts",
+    getBreakoutLog,
+    "Couldn't load breakouts.",
+  );
 
   return (
     <div className="space-y-6">
@@ -37,7 +26,7 @@ export function BreakoutLog() {
       </div>
 
       {state.status === "loading" && <BreakoutSkeleton />}
-      {state.status === "error" && <ErrorState message={state.message} onRetry={load} />}
+      {state.status === "error" && <ErrorState message={state.message} onRetry={refresh} />}
       {state.status === "ready" &&
         (state.data.entries.length === 0 ? (
           <EmptyState

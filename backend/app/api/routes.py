@@ -37,7 +37,12 @@ from app.api.schemas import (
 from app.db.base import get_session
 from app.db.models import Alert, Creator, Post, Sample
 from app.detector.evaluate import evaluate_post
-from app.detector.momentum import IntervalSignal, SamplePoint, _dedupe_samples, compute_interval_signals
+from app.detector.momentum import (
+    IntervalSignal,
+    SamplePoint,
+    _dedupe_samples,
+    compute_interval_signals,
+)
 from app.detector.states import PostState, run_state_machine
 
 router = APIRouter()
@@ -69,6 +74,27 @@ _MIN_BASELINE_VELOCITY = 1.0  # views/sim-hour below which "typical" is too clos
 # computed" (None) rather than displayed as a fake precise-looking multiple.
 _MAX_SANE_PACE_RATIO = 20.0
 _DEFAULT_RECENT_WINDOW_HOURS = 6.0
+
+# --- Noise floor for the comparative ranking.
+# The in-app attention queue runs a deliberately SOFTER bar than official
+# alerts: it should have something worth a look even on a quiet day, so it
+# ranks on pace relative to a creator's own norm rather than requiring the
+# detector's full breakout evidence. Softer, though, is not "no bar at all".
+#
+# Found against live data: post wp_a0c3161228 gained FOUR views in half an
+# hour and came back at "8.4x pace", labelled Worth watching and ranked #1
+# on the momentum board — while the detector had already gated that same
+# interval out as below_volume_floor. Dividing a trivial gain by a near-flat
+# baseline produces a big, precise-looking number that means nothing.
+#
+# These are a NOISE floor, not the detector's signal floor, and they sit far
+# below config.MIN_VIEWS_FLOOR (500) on purpose. The only question they
+# answer is "is this movement distinguishable from noise" — not "is this a
+# breakout", which remains entirely the detector's call. Both have to clear,
+# so neither a small absolute wiggle on a large post nor a small percentage
+# on a tiny one can be ranked as momentum.
+_MIN_RANKABLE_GAIN_VIEWS = 25
+_MIN_RANKABLE_GROWTH_PCT = 0.5
 
 
 async def get_db() -> AsyncIterator[AsyncSession]:
@@ -166,6 +192,18 @@ def _consecutive_qualifying(signals: list[IntervalSignal]) -> int:
             break
         count += 1
     return count
+
+
+def _is_rankable_movement(latest_signal: IntervalSignal) -> bool:
+    """Is the latest interval's movement big enough to be worth comparing at
+    all? See _MIN_RANKABLE_GAIN_VIEWS / _MIN_RANKABLE_GROWTH_PCT — this is a
+    noise floor for the dashboard's comparative ranking, deliberately far
+    below the detector's own signal floor, and it never affects detection.
+    """
+    return (
+        latest_signal.absolute_gain >= _MIN_RANKABLE_GAIN_VIEWS
+        and latest_signal.relative_growth_pct >= _MIN_RANKABLE_GROWTH_PCT
+    )
 
 
 def _sane_ratio(value: float) -> float | None:
@@ -337,7 +375,10 @@ def _compute_posts(
 
         pace_ratio: float | None = None
         pace_basis: str | None = None
-        if signals and not is_gone:
+        # Same policy as _sane_ratio: when the number underneath wouldn't be
+        # believable, say "not enough history" rather than show it. See
+        # _MIN_RANKABLE_* above for why a trivial gain can't be ranked.
+        if signals and not is_gone and _is_rankable_movement(signals[-1]):
             latest_signal = signals[-1]
             post_age = latest_signal.sim_hours - post.first_seen_sim_hours
             other_points = [
