@@ -580,7 +580,12 @@ def deterministic_answer(facts: dict[str, Any], message: str = "") -> str:
             return _answer_what_changed(facts)
         if "alert" in asked:
             return _answer_alerts(facts)
-        if "creator" in asked or "performing" in asked:
+        # Deliberately not a bare "creator" match: a free-text question can
+        # mention a creator by name ("how many views for this creator?")
+        # without asking the quick-prompt's actual question ("which
+        # creators are performing?") — matching on the word alone hijacked
+        # unrelated questions into this generic list.
+        if "which creator" in asked or "performing" in asked:
             return _answer_creators(facts)
         if "attention" in asked or "first" in asked or "priorit" in asked or "deserve" in asked:
             return _answer_movers(facts)
@@ -812,6 +817,58 @@ async def agent_chat(request: ChatRequest, session: AsyncSession = Depends(get_d
     return ChatResponse(
         text=reply, reasoning=reasoning, facts_used=facts, llm_available=llm_available
     )
+
+
+_HEADLINE_PROMPT = """You write the single headline at the top of a creator-monitoring dashboard for LongSheet, a bedding brand running a program of about 40 creators on a platform called Warble. The manager reads this before anything else on the page.
+
+You get a JSON object of real, pre-computed facts. Write ONE line, 4 to 9 words, that tells them the most important thing in it right now.
+
+It should read like a sharp newsroom headline written by someone who knows the business: specific, a little dry, never cute for its own sake, never a slogan. Lead with whatever actually matters most — something taking off, a creator repeating, a quiet week, posts coming down. A creator handle is welcome when one post genuinely dominates.
+
+Hard rules, no exceptions:
+- Only numbers that appear in the JSON. No invented counts, multiples, or percentages.
+- Never declare a decision or an action ("boost this", "cut spend") — you're reporting, not deciding.
+- No emoji, no exclamation marks, no trailing period, no quote marks around the line.
+- Output the headline alone. No labels, no preamble, nothing else."""
+
+
+class HeadlineResponse(BaseModel):
+    headline: str | None
+    llm_available: bool
+
+
+@router.get("/agent/headline", response_model=HeadlineResponse)
+async def get_headline(session: AsyncSession = Depends(get_db)) -> HeadlineResponse:
+    """The dashboard's top line, written fresh from current facts. Its own
+    endpoint rather than part of /home so the page never waits on a model
+    call to render — the deterministic briefing shows immediately and this
+    replaces it if and when it arrives."""
+    facts = await build_facts(session, None)
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY") or settings.anthropic_api_key
+    if not api_key:
+        return HeadlineResponse(headline=None, llm_available=False)
+
+    try:
+        from anthropic import AsyncAnthropic
+
+        client = AsyncAnthropic(api_key=api_key, timeout=LLM_TIMEOUT_SECONDS)
+        response = await client.messages.create(
+            model=MODEL,
+            max_tokens=60,
+            system=_HEADLINE_PROMPT,
+            messages=[{"role": "user", "content": f"Facts:\n{json.dumps(facts, separators=(',', ':'))}"}],
+        )
+    except Exception as exc:  # noqa: BLE001 - any failure falls back to the deterministic briefing
+        logger.warning("agent: headline call failed (%s)", exc)
+        return HeadlineResponse(headline=None, llm_available=False)
+
+    headline = "".join(b.text for b in response.content if b.type == "text").strip().strip('"')
+    # Same grounding bar as every other generated line: a headline that
+    # invents a number is worse than no headline at all.
+    if not headline or not _numbers_are_grounded(headline, facts):
+        return HeadlineResponse(headline=None, llm_available=False)
+    return HeadlineResponse(headline=headline, llm_available=True)
 
 
 @router.delete("/agent/chat/{session_id}")

@@ -46,7 +46,20 @@ export interface HomePost {
   evidence: EvidenceDetail | null;
   is_gone: boolean;
   latest_sim_hours: number | null;
+  // Real ISO timestamp of the latest reading — used to show an actual
+  // date once something is too old for a relative phrase.
+  latest_metrics_at: string | null;
   sparkline: number[];
+}
+
+export interface HomeStateTransition {
+  post: HomePost;
+  from_state: PostState;
+  to_state: PostState;
+  from_status_label: string;
+  to_status_label: string;
+  changed_sim_hours: number;
+  changed_at: string | null;
 }
 
 export interface HomeResponse {
@@ -58,6 +71,10 @@ export interface HomeResponse {
   // status_label — the Momentum Board's "New" group.
   new_posts: HomePost[];
   unavailable_posts: HomePost[];
+  recent_changes: HomeStateTransition[];
+  window_start: string | null;
+  window_end: string | null;
+  window_type: "last_6_hours" | "since_last_visit";
   total_posts: number;
   unavailable_count: number;
   current_sim_hours: number | null;

@@ -40,10 +40,7 @@ export function PostsBoard() {
           Track program posts
         </p>
         {state.status === "ready" && (
-          <p className="mt-1 text-sm text-ink-muted">
-            {state.data.total_posts} post{state.data.total_posts === 1 ? "" : "s"} tracked, ranked by
-            current momentum — highest first.
-          </p>
+          <p className="mt-1 text-sm text-ink-muted">Active posts ranked from highest to lowest momentum.</p>
         )}
       </div>
 
@@ -132,7 +129,7 @@ function PostsBoardRow({
             <Sparkline values={post.sparkline} />
           </div>
         ) : (
-          <span className="text-xs text-ink-muted">{formatRelativeSimTime(post.latest_sim_hours, currentSimHours)}</span>
+          <span className="text-xs text-ink-muted">{formatRelativeSimTime(post.latest_sim_hours, currentSimHours, post.latest_metrics_at)}</span>
         )}
       </div>
     </Link>

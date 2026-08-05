@@ -27,14 +27,17 @@
   /* Taking off: needs attention now — coral. */
   --color-taking-off: #fc896d;
   --color-taking-off-soft: #fdb19b; /* peach */
-  /* Worth watching: promising — violet. Still a real status signal (like
-     a chart line), so it keeps its own color even though generic "accent"
-     chrome no longer does. */
-  --color-watching: #7670f2;
-  --color-watching-soft: #dcc8f6; /* lavender */
-  /* Unavailable: muted — periwinkle. */
-  --color-unavailable: #c9c6ff;
-  --color-unavailable-soft: #e9daf4; /* lilac */
+  /* Worth watching: promising — green. The one deliberate exception to
+     the coral/violet palette: "promising" reads as green everywhere, and
+     forcing it into the same violet as generic UI chrome made the signal
+     harder to scan, not easier. */
+  --color-watching: #2f9e5c;
+  --color-watching-soft: #e6f6ec;
+  /* Unavailable: the post came down — red, the same signed-metric red
+     used for a negative move, since "gone" is the one genuinely bad
+     state a post can be in. */
+  --color-unavailable: #c94a3f;
+  --color-unavailable-soft: #fbeae8;
 
   /* The breakout spotlight card's gradient — the one card allowed a tint,
      coral-family to echo "Taking off." Nothing else pulls from this. */
@@ -104,6 +107,33 @@ body {
     radial-gradient(circle at center, rgb(255 255 255 / 88%) 0 31%, transparent 58%);
   background-blend-mode: normal, normal, normal, normal, normal, screen;
   backdrop-filter: blur(24px);
+}
+
+/* Same violet/coral pair the agent interface's pastel wash uses, scaled
+   down to a quiet corner glow plus an inset shadow for depth — a hint of
+   colour and dimension on an otherwise plain white card, not a tinted
+   fill. Used by Program Pulse's stat cards. */
+.pulse-card-glow {
+  background-color: #ffffff;
+  background-image:
+    radial-gradient(circle at 88% -12%, rgb(150 129 255 / 16%) 0%, transparent 48%),
+    radial-gradient(circle at -12% 112%, rgb(255 127 117 / 13%) 0%, transparent 48%);
+  box-shadow:
+    inset 0 1px 2px rgb(0 0 0 / 4%),
+    inset 0 0 26px rgb(150 129 255 / 7%);
+}
+
+/* A card that visibly stands out from the flat white cards around it
+   through elevation, not colour: a darker, translucent-glass fill (the
+   same language as the app's own board/nav surfaces) and a real lifted
+   shadow. For the one card per screen that deserves a second look. */
+.lifted-glass-card {
+  background-color: rgb(255 255 255 / 92%);
+  backdrop-filter: blur(12px);
+  box-shadow:
+    0 0 0 1px rgb(0 0 0 / 6%),
+    0 4px 10px -2px rgb(0 0 0 / 8%),
+    0 18px 36px -10px rgb(0 0 0 / 16%);
 }
 
 /* Thin, translucent scrollbars for the internal scroll regions (page

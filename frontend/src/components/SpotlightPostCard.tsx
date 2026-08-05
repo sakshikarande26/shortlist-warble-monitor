@@ -53,7 +53,7 @@ export function SpotlightPostCard({ post, currentSimHours }: SpotlightPostCardPr
           )}
 
           <p className="mt-3 text-xs text-ink-muted">
-            {formatRelativeSimTime(post.latest_sim_hours, currentSimHours)}
+            {formatRelativeSimTime(post.latest_sim_hours, currentSimHours, post.latest_metrics_at)}
           </p>
         </div>
 

@@ -31,7 +31,7 @@ export function PostCard({ post, currentSimHours }: PostCardProps) {
         {post.caption && <p className="mt-0.5 truncate text-sm text-ink-muted">{post.caption}</p>}
         <p className="mt-1 text-sm text-ink">{performanceStatement(post)}</p>
         <p className="mt-1 text-xs text-ink-muted">
-          {formatRelativeSimTime(post.latest_sim_hours, currentSimHours)}
+          {formatRelativeSimTime(post.latest_sim_hours, currentSimHours, post.latest_metrics_at)}
           {stale && <span className="ml-1 text-ink">· hasn't refreshed in a while</span>}
         </p>
       </div>

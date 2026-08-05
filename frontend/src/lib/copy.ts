@@ -132,14 +132,32 @@ export function creatorInsight(detail: Pick<PostDetail, "creator" | "evidence">)
 /** Sim time isn't wall-clock time, so freshness has to be phrased relative
  * to the most recent known sim_hours (current_sim_hours from the API),
  * never derived from Date.now(). */
+const DAYS_BEFORE_ABSOLUTE_DATE = 3;
+
 export function formatRelativeSimTime(
   latestSimHours: number | null,
   currentSimHours: number | null,
+  // Real ISO timestamp of that reading. Once something is more than a few
+  // days old, "Updated 6 days ago" stops being useful and an actual date
+  // is easier to reason about — that switch needs a real timestamp, which
+  // sim_hours alone can't provide.
+  latestMetricsAt?: string | null,
 ): string {
   if (latestSimHours === null) return "No updates yet";
   if (currentSimHours === null) return "Updated recently";
   const delta = currentSimHours - latestSimHours;
   if (delta < 1 / 60) return "Updated moments ago";
+
+  if (delta >= 24 * DAYS_BEFORE_ABSOLUTE_DATE && latestMetricsAt) {
+    const date = new Date(latestMetricsAt);
+    if (!Number.isNaN(date.getTime())) {
+      return `Updated ${date.toLocaleDateString(undefined, {
+        weekday: "short",
+        day: "numeric",
+        month: "short",
+      })}`;
+    }
+  }
 
   if (delta < 1) {
     const minutes = Math.min(Math.round(delta * 60), 59);

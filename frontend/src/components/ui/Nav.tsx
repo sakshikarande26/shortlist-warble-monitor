@@ -8,17 +8,6 @@ const NAV_ITEMS = [
   { label: "Breakouts", to: "/breakouts", Icon: BreakoutsIcon },
 ];
 
-// Every platform this account could in principle connect — Warble is the
-// only one actually live today. Shown honestly: one real, active
-// connection and three plainly-labeled "not connected" placeholders, never
-// implying functionality that doesn't exist.
-const PLATFORMS: { label: string; mono: string; connected: boolean }[] = [
-  { label: "Warble", mono: "W", connected: true },
-  { label: "YouTube", mono: "YT", connected: false },
-  { label: "TikTok", mono: "TT", connected: false },
-  { label: "Instagram", mono: "IG", connected: false },
-];
-
 // Slim, calm sidebar — a hairline divider carries the separation from the
 // center column, not a heavy panel treatment. The marketing agent chat's
 // own edge tab (AppShell) still works; this adds a second, sidebar-native
@@ -63,29 +52,9 @@ export function Nav({ onOpenAgent }: { onOpenAgent: () => void }) {
       </div>
 
       <div className="mt-auto border-t border-line pt-4">
-        <p className="text-[11px] font-medium tracking-wider text-ink-muted uppercase">
-          Under monitoring
-        </p>
-        <div className="mt-2 flex flex-col gap-1.5">
-          {PLATFORMS.map((platform) => (
-            <div key={platform.label} className="flex items-center gap-2">
-              <span
-                className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[9px] font-semibold ${
-                  platform.connected
-                    ? "bg-accent text-white"
-                    : "border border-line text-ink-muted"
-                }`}
-              >
-                {platform.mono}
-              </span>
-              <span className={`text-sm ${platform.connected ? "text-ink" : "text-ink-muted"}`}>
-                {platform.label}
-              </span>
-              <span className="ml-auto text-[10px] text-ink-muted">
-                {platform.connected ? "Connected" : "Not connected"}
-              </span>
-            </div>
-          ))}
+        <div className="flex items-center gap-2">
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
+          <span className="text-sm text-ink">Warble active</span>
         </div>
 
         <p className="mt-4 border-t border-line pt-3 text-[10px] leading-snug text-ink-muted">

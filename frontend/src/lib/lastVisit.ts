@@ -1,20 +1,24 @@
-// Tracks, client-side only, the sim_hours as of the marketer's last visit
-// to Home — so a post that broke out since then can be called out
-// specifically ("while you were away"), not just folded anonymously into
-// the regular queue. No backend concept of "last visit" exists (no user
-// accounts), so this is deliberately a local, best-effort marker: it
-// resets if the user clears storage or opens a different browser, which
-// is an acceptable trade-off for a nice-to-have highlight, not a source
-// of truth for anything the product depends on.
-const STORAGE_KEY = "warble-monitor:last-visit-sim-hours";
+// Tracks the real wall-clock time when Home last loaded successfully in
+// this browser. The backend decides what changed inside that window; this
+// value only tells it which window to use. If the marker is missing or
+// malformed, the API falls back to its own six-hour history window.
+const STORAGE_KEY = "warble-monitor:last-seen-at";
 
-export function getLastVisitSimHours(): number | null {
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (raw === null) return null;
-  const value = Number(raw);
-  return Number.isFinite(value) ? value : null;
+export function getLastSeenAt(): string | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw === null) return null;
+    const value = Date.parse(raw);
+    return Number.isFinite(value) ? raw : null;
+  } catch {
+    return null;
+  }
 }
 
-export function setLastVisitSimHours(simHours: number): void {
-  localStorage.setItem(STORAGE_KEY, String(simHours));
+export function setLastSeenAt(timestamp: string = new Date().toISOString()): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, timestamp);
+  } catch {
+    // A blocked storage write should not blank the dashboard.
+  }
 }

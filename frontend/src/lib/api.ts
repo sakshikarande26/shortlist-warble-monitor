@@ -36,8 +36,9 @@ async function request<T>(path: string): Promise<T> {
   return (await response.json()) as T;
 }
 
-export function getHome(): Promise<HomeResponse> {
-  return request<HomeResponse>("/api/home");
+export function getHome(since?: string | null): Promise<HomeResponse> {
+  const query = since ? `?since=${encodeURIComponent(since)}` : "";
+  return request<HomeResponse>(`/api/home${query}`);
 }
 
 export function getPostDetail(postId: string): Promise<PostDetail> {
@@ -62,6 +63,17 @@ export function getBreakoutLog(): Promise<BreakoutLogResponse> {
 
 export function getPostsBoard(): Promise<PostsBoardResponse> {
   return request<PostsBoardResponse>("/api/posts");
+}
+
+export interface HeadlineResponse {
+  headline: string | null;
+  llm_available: boolean;
+}
+
+// Its own call, deliberately: Home renders its deterministic briefing
+// immediately and this upgrades it in when (and only if) it arrives.
+export function getAgentHeadline(): Promise<HeadlineResponse> {
+  return request<HeadlineResponse>("/api/agent/headline");
 }
 
 export interface AgentChatRequest {

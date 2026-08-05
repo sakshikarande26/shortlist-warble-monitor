@@ -31,8 +31,8 @@ const NEGATIVE_COLOR = "#c94a3f";
 // --color-watching/--color-unavailable.
 const LINE_COLORS: Record<string, string> = {
   "Taking off": "#fc896d",
-  "Worth watching": "#7670f2",
-  Unavailable: "#c9c6ff",
+  "Worth watching": "#2f9e5c",
+  Unavailable: "#c94a3f",
 };
 const DEFAULT_LINE_COLOR = "#18181b";
 

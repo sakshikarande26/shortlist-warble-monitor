@@ -55,7 +55,21 @@ class HomePost(BaseModel):
     evidence: EvidenceDetail | None  # grounds each card's performance line in this post's own numbers
     is_gone: bool
     latest_sim_hours: float | None
+    # Real ISO timestamp of the latest reading, straight off the sample —
+    # the only way the UI can show an actual calendar date for anything
+    # older than a few days, since sim_hours alone can't produce one.
+    latest_metrics_at: str | None
     sparkline: list[int]  # last few deduped view counts, for a small trend line — not full history
+
+
+class HomeStateTransition(BaseModel):
+    post: HomePost
+    from_state: PostState
+    to_state: PostState
+    from_status_label: str
+    to_status_label: str
+    changed_sim_hours: float
+    changed_at: str | None
 
 
 class HomeResponse(BaseModel):
@@ -70,6 +84,10 @@ class HomeResponse(BaseModel):
     # change to the canonical status_label vocabulary.
     new_posts: list[HomePost]
     unavailable_posts: list[HomePost]  # deleted/taken-down, history preserved
+    recent_changes: list[HomeStateTransition]
+    window_start: str | None
+    window_end: str | None
+    window_type: Literal["last_6_hours", "since_last_visit"]
     total_posts: int  # distinguishes "nothing tracked yet" from "nothing moving right now"
     unavailable_count: int
     current_sim_hours: float | None

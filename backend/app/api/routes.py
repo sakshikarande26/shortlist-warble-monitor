@@ -3,11 +3,12 @@ never calls the Warble API, never touches collector/detector/alert logic.
 """
 
 import statistics
+from datetime import UTC, datetime, timedelta
 from collections import defaultdict
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,6 +26,7 @@ from app.api.schemas import (
     EvidenceDetail,
     HomePost,
     HomeResponse,
+    HomeStateTransition,
     NotablePost,
     PostDetail,
     PostsBoardResponse,
@@ -65,6 +67,7 @@ _MIN_BASELINE_VELOCITY = 1.0  # views/sim-hour below which "typical" is too clos
 # the division, not a real signal — treated the same as "can't be
 # computed" (None) rather than displayed as a fake precise-looking multiple.
 _MAX_SANE_PACE_RATIO = 20.0
+_DEFAULT_RECENT_WINDOW_HOURS = 6.0
 
 
 async def get_db() -> AsyncIterator[AsyncSession]:
@@ -81,6 +84,30 @@ def _latest_reading(samples: list[Sample]) -> Sample | None:
         return None
     max_hour = max(s.sim_hours for s in samples)
     return max((s for s in samples if s.sim_hours == max_hour), key=lambda s: s.views)
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def _iso_timestamp(value: datetime) -> str:
+    return _as_utc(value).isoformat()
+
+
+def _sample_observed_at(sample: Sample) -> datetime:
+    try:
+        return _as_utc(datetime.fromisoformat(sample.metrics_at.replace("Z", "+00:00")))
+    except ValueError:
+        return _as_utc(sample.captured_at)
+
+
+def _sample_time_at_or_after(samples: list[Sample], sim_hours: float) -> datetime | None:
+    later_samples = [s for s in samples if s.sim_hours >= sim_hours]
+    if not later_samples:
+        return None
+    return _sample_observed_at(min(later_samples, key=lambda s: s.sim_hours))
 
 
 async def _current_sim_hours(session: AsyncSession) -> float | None:
@@ -232,6 +259,16 @@ def _unified_status(state: PostState, is_gone: bool, pace_ratio: float | None) -
     return _STEADY
 
 
+def _transition_status_label(state: PostState) -> str:
+    """Collapse detector states into the user-facing status labels that
+    make a transition meaningful in the briefing window."""
+    if state == "BREAKOUT":
+        return _TAKING_OFF
+    if state in ("WATCH", "RISING"):
+        return _WORTH_WATCHING
+    return _STEADY
+
+
 @dataclass
 class _PostComputation:
     state: PostState
@@ -354,13 +391,73 @@ def _build_home_posts(
             evidence=comp.evidence,
             is_gone=post.status == "gone",
             latest_sim_hours=comp.latest.sim_hours if comp.latest else None,
+            latest_metrics_at=comp.latest.metrics_at if comp.latest else None,
             sparkline=sparkline,
         )
     return home_posts
 
 
+def _build_recent_changes(
+    posts: list[Post],
+    home_posts: dict[str, HomePost],
+    computations: dict[str, _PostComputation],
+    samples_by_post: dict[str, list[Sample]],
+    *,
+    window_start: datetime | None,
+    window_end: datetime | None,
+) -> list[HomeStateTransition]:
+    changes: list[HomeStateTransition] = []
+    if window_start is None or window_end is None:
+        return changes
+
+    for post in posts:
+        comp = computations[post.id]
+        history = run_state_machine(comp.signals)
+        previous_state: PostState = "NEW"
+        latest_change: HomeStateTransition | None = None
+        latest_change_time: datetime | None = None
+
+        for state_at in history:
+            if state_at.state == previous_state:
+                continue
+
+            from_label = _transition_status_label(previous_state)
+            to_label = _transition_status_label(state_at.state)
+            changed_at = _sample_time_at_or_after(samples_by_post.get(post.id, []), state_at.sim_hours)
+            previous_for_transition = previous_state
+            previous_state = state_at.state
+
+            if from_label == to_label or changed_at is None:
+                continue
+            if changed_at < window_start or changed_at > window_end:
+                continue
+
+            latest_change_time = changed_at
+            latest_change = HomeStateTransition(
+                post=home_posts[post.id],
+                from_state=previous_for_transition,
+                to_state=state_at.state,
+                from_status_label=from_label,
+                to_status_label=to_label,
+                changed_sim_hours=state_at.sim_hours,
+                changed_at=_iso_timestamp(changed_at),
+            )
+
+        if latest_change is not None and latest_change_time is not None:
+            changes.append(latest_change)
+
+    return sorted(
+        changes,
+        key=lambda c: (c.changed_at or "", c.changed_sim_hours),
+        reverse=True,
+    )
+
+
 @router.get("/home", response_model=HomeResponse)
-async def get_home(session: AsyncSession = Depends(get_db)) -> HomeResponse:
+async def get_home(
+    since: datetime | None = Query(default=None),
+    session: AsyncSession = Depends(get_db),
+) -> HomeResponse:
     creators = {c.id: c for c in (await session.execute(select(Creator))).scalars().all()}
     posts = (await session.execute(select(Post))).scalars().all()
     post_ids = [p.id for p in posts]
@@ -399,11 +496,36 @@ async def get_home(session: AsyncSession = Depends(get_db)) -> HomeResponse:
         reverse=True,
     )
 
+    all_samples = [sample for samples in samples_by_post.values() for sample in samples]
+    latest_sample_at = max((_sample_observed_at(sample) for sample in all_samples), default=None)
+    if since is not None:
+        window_start = _as_utc(since)
+        window_type = "since_last_visit"
+    elif latest_sample_at is not None:
+        window_start = latest_sample_at - timedelta(hours=_DEFAULT_RECENT_WINDOW_HOURS)
+        window_type = "last_6_hours"
+    else:
+        window_start = None
+        window_type = "last_6_hours"
+    window_end = latest_sample_at
+    recent_changes = _build_recent_changes(
+        posts,
+        home_posts,
+        computations,
+        samples_by_post,
+        window_start=window_start,
+        window_end=window_end,
+    )
+
     return HomeResponse(
         act_now=act_now,
         watch_closely=watch_closely,
         new_posts=new_posts,
         unavailable_posts=unavailable_posts,
+        recent_changes=recent_changes,
+        window_start=_iso_timestamp(window_start) if window_start is not None else None,
+        window_end=_iso_timestamp(window_end) if window_end is not None else None,
+        window_type=window_type,
         total_posts=len(posts),
         unavailable_count=sum(1 for p in home_posts.values() if p.is_gone),
         current_sim_hours=await _current_sim_hours(session),

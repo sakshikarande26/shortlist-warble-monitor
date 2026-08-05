@@ -69,7 +69,7 @@ export function UnavailablePosts() {
                   )}
                   <p className="mt-1 text-sm text-ink-muted">
                     Last seen at {formatViews(post.views)} views ·{" "}
-                    {formatRelativeSimTime(post.latest_sim_hours, state.data.current_sim_hours)}
+                    {formatRelativeSimTime(post.latest_sim_hours, state.data.current_sim_hours, post.latest_metrics_at)}
                   </p>
                 </div>
               </Link>

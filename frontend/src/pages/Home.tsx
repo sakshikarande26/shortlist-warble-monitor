@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { ApiError, getHome, getStatus } from "../lib/api";
-import type { HomeResponse, SystemStatus } from "../lib/types";
+import { ApiError, getBreakoutLog, getHome, getStatus } from "../lib/api";
+import type { BreakoutLogResponse, HomeResponse, SystemStatus } from "../lib/types";
 import type { LoadState } from "../lib/loadState";
 import { Briefing } from "../components/Briefing";
 import { TriageSection } from "../components/TriageSection";
@@ -13,28 +13,34 @@ import { Surface } from "../components/ui/Surface";
 import { SkeletonLine, SkeletonCard } from "../components/states/Skeleton";
 import { EmptyState } from "../components/states/EmptyState";
 import { ErrorState } from "../components/states/ErrorState";
-import { getLastVisitSimHours, setLastVisitSimHours } from "../lib/lastVisit";
-import { formatRelativeSimTime } from "../lib/copy";
+import { getLastSeenAt, setLastSeenAt } from "../lib/lastVisit";
+import { formatRelativeSimTime, getInitials } from "../lib/copy";
 
 // How many "Removed" rows to preview on Home — the full list lives on
 // /unavailable. Matches the backend's own section cap for the other
 // Momentum Board groups (routes.py's _SECTION_CAP).
 const REMOVED_PREVIEW_CAP = 5;
 
-// Home is the Momentum Board screen — it needs two endpoints at once
-// (home + status) so its "ready" data is both rather than one response.
+// Home is the Momentum Board screen — it needs three endpoints at once
+// (home + status + the breakout log, for Program Pulse's Weekly view) so
+// its "ready" data is all three rather than one response.
 interface HomeData {
   home: HomeResponse;
   status: SystemStatus;
+  breakouts: BreakoutLogResponse;
 }
 
 export function Home() {
   const [state, setState] = useState<LoadState<HomeData>>({ status: "loading" });
 
   const load = useCallback(() => {
+    const lastSeenAt = getLastSeenAt();
     setState({ status: "loading" });
-    Promise.all([getHome(), getStatus()])
-      .then(([home, status]) => setState({ status: "ready", data: { home, status } }))
+    Promise.all([getHome(lastSeenAt), getStatus(), getBreakoutLog()])
+      .then(([home, status, breakouts]) => {
+        setState({ status: "ready", data: { home, status, breakouts } });
+        setLastSeenAt();
+      })
       .catch((error: unknown) => {
         const message = error instanceof ApiError ? error.message : "Couldn't load the briefing.";
         setState({ status: "error", message });
@@ -49,7 +55,9 @@ export function Home() {
     <>
       {state.status === "loading" && <HomeSkeleton />}
       {state.status === "error" && <ErrorState message={state.message} onRetry={load} />}
-      {state.status === "ready" && <HomeContent data={state.data.home} status={state.data.status} />}
+      {state.status === "ready" && (
+        <HomeContent data={state.data.home} status={state.data.status} breakouts={state.data.breakouts} />
+      )}
     </>
   );
 }
@@ -59,33 +67,17 @@ export function Home() {
 // comparative-to-creator ranking — this page just renders what it's given,
 // it doesn't re-derive groupings from state client-side (that was the old
 // bug: a section's header and its cards' labels could disagree).
-function HomeContent({ data, status }: { data: HomeResponse; status: SystemStatus }) {
+function HomeContent({
+  data,
+  status,
+  breakouts,
+}: {
+  data: HomeResponse;
+  status: SystemStatus;
+  breakouts: BreakoutLogResponse;
+}) {
   const { act_now, watch_closely, new_posts, unavailable_posts, total_posts, unavailable_count, current_sim_hours } =
     data;
-
-  // Which act_now posts became notable since the marketer's last visit —
-  // a side effect (reading/writing localStorage), so it belongs in an
-  // effect, not useMemo. Runs once per real data load (keyed on
-  // current_sim_hours, which only changes when a genuinely new response
-  // arrives), reading the previous marker before overwriting it.
-  const [whileAwayIds, setWhileAwayIds] = useState<Set<string>>(new Set());
-  useEffect(() => {
-    if (current_sim_hours === null) return;
-    const previousVisit = getLastVisitSimHours();
-    setLastVisitSimHours(current_sim_hours);
-    if (previousVisit === null) {
-      setWhileAwayIds(new Set()); // first-ever visit — nothing to compare against
-      return;
-    }
-    setWhileAwayIds(
-      new Set(
-        act_now
-          .filter((p) => p.latest_sim_hours !== null && p.latest_sim_hours > previousVisit)
-          .map((p) => p.post_id),
-      ),
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [current_sim_hours]);
 
   if (total_posts === 0) {
     return (
@@ -111,15 +103,21 @@ function HomeContent({ data, status }: { data: HomeResponse; status: SystemStatu
     );
   }
 
-  const whileAwayPosts = act_now.filter((p) => whileAwayIds.has(p.post_id));
   const removedPreview = unavailable_posts.slice(0, REMOVED_PREVIEW_CAP);
 
   return (
     <div className="space-y-8">
       <ProgramPulse
-        postsCount={total_posts}
-        needsAttentionCount={act_now.length + watch_closely.length}
-        alertsReceivedCount={status.alerts_sent}
+        program={{
+          postsCount: total_posts,
+          needsAttentionCount: act_now.length + watch_closely.length,
+          breakoutsCount: breakouts.entries.length,
+        }}
+        weekly={{
+          alertsReceivedCount: status.alerts_sent,
+          newCount: new_posts.length,
+          removedCount: unavailable_count,
+        }}
       />
 
       <Briefing
@@ -127,7 +125,10 @@ function HomeContent({ data, status }: { data: HomeResponse; status: SystemStatu
         watchCount={watch_closely.length}
         unavailableCount={unavailable_count}
       />
-      <WhileAwaySection posts={whileAwayPosts} />
+      <WhileAwaySection
+        changes={data.recent_changes ?? []}
+        windowType={data.window_type ?? "last_6_hours"}
+      />
 
       <section>
         <h2 className="mb-3 text-[15px] font-medium text-ink">Act now</h2>
@@ -147,10 +148,10 @@ function HomeContent({ data, status }: { data: HomeResponse; status: SystemStatu
             )}
           </div>
         ) : (
-          <div className="space-y-3">
-            <p className="text-sm text-ink-muted">
-              All quiet on the breakout front. Nothing is taking off right now, but we're still watching
-              closely.
+          <div className="lifted-glass-card rounded-2xl p-5 sm:p-6">
+            <p className="text-[15px] font-semibold text-ink">All quiet on the breakout front</p>
+            <p className="mt-1 text-sm text-ink-muted">
+              Nothing is taking off right now, but we're still watching closely.
             </p>
             <LastBreakoutInsight status={status} currentSimHours={current_sim_hours} />
           </div>
@@ -204,14 +205,23 @@ function LastBreakoutInsight({
   return (
     <Link
       to={`/posts/${alert.post_id}`}
-      className="block rounded-xl border border-line bg-white/80 px-4 py-3 text-sm transition-colors hover:bg-black/[0.02]"
+      className="mt-4 flex items-center gap-3 rounded-xl border border-line bg-black/[0.02] p-3 transition-colors hover:border-ink/20 hover:bg-white"
     >
-      <span className="text-ink-muted">Last confirmed breakout: </span>
-      <span className="font-medium text-ink">@{alert.creator_handle}</span>
-      {alert.caption && <span className="text-ink-muted">, "{alert.caption}",</span>}
-      <span className="ml-1 text-ink-muted">
-        ({formatRelativeSimTime(alert.sim_hours, currentSimHours)})
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-black/[0.04] text-sm font-semibold text-ink">
+        {getInitials(alert.creator_handle)}
       </span>
+      <div className="min-w-0 flex-1">
+        <p className="text-[10px] font-semibold tracking-wider text-ink-muted uppercase">
+          Last confirmed breakout
+        </p>
+        <p className="mt-0.5 truncate text-sm text-ink">
+          <span className="font-medium">@{alert.creator_handle}</span>
+          {alert.caption && <span className="text-ink-muted">, "{alert.caption}"</span>}
+        </p>
+        <p className="mt-0.5 text-xs text-ink-muted">
+          {formatRelativeSimTime(alert.sim_hours, currentSimHours)}
+        </p>
+      </div>
     </Link>
   );
 }

@@ -1,36 +1,85 @@
+import { useState } from "react";
+
 interface ProgramPulseProps {
-  postsCount: number;
-  needsAttentionCount: number;
-  alertsReceivedCount: number;
+  program: {
+    postsCount: number;
+    needsAttentionCount: number;
+    breakoutsCount: number;
+  };
+  weekly: {
+    alertsReceivedCount: number;
+    newCount: number;
+    removedCount: number;
+  };
 }
+
+type View = "program" | "weekly";
 
 interface PulseCardData {
   label: string;
   value: number;
 }
 
-// Three real numbers — reassurance that coverage is healthy, not a KPI
-// dashboard. Plain black/white/grey cards on purpose: colour on this site
-// is reserved for charts, signed metrics (red/green), and the breakout
-// spotlight card — a bare count like "195 tracked posts" doesn't carry a
-// direction or a status, so it doesn't get a tint.
-export function ProgramPulse({ postsCount, needsAttentionCount, alertsReceivedCount }: ProgramPulseProps) {
-  const cards: PulseCardData[] = [
-    { label: "Tracked posts", value: postsCount },
-    { label: "Needs attention", value: needsAttentionCount },
-    { label: "Alerts received", value: alertsReceivedCount },
+// Two real, genuinely different slices — not the same numbers re-labeled.
+// The whole simulation is one 7-day window (CLAUDE.md), so "breakouts
+// this week" and "breakouts total" would always be identical; each number
+// lives in exactly one tab, never duplicated under a different label.
+// "Program" is where things stand right now (a snapshot); "Weekly" is
+// what actually happened across the window (an activity count).
+function cardsFor(view: View, program: ProgramPulseProps["program"], weekly: ProgramPulseProps["weekly"]): PulseCardData[] {
+  if (view === "program") {
+    return [
+      { label: "Tracked posts", value: program.postsCount },
+      { label: "Needs attention", value: program.needsAttentionCount },
+      { label: "Breakouts", value: program.breakoutsCount },
+    ];
+  }
+  return [
+    { label: "Alerts received", value: weekly.alertsReceivedCount },
+    { label: "New posts this week", value: weekly.newCount },
+    { label: "Removed this week", value: weekly.removedCount },
   ];
+}
+
+// Reassurance that coverage is healthy, not a KPI dashboard — three cards,
+// a quiet inner glow (the agent interface's violet/coral pair, toned way
+// down), everything else plain black/white/grey.
+export function ProgramPulse({ program, weekly }: ProgramPulseProps) {
+  const [view, setView] = useState<View>("program");
+  const cards = cardsFor(view, program, weekly);
 
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-      {cards.map((card) => (
-        <div key={card.label} className="rounded-2xl border border-line bg-white p-5">
-          <p className="text-4xl leading-none font-bold tracking-tight text-ink tabular-nums">
-            {card.value}
-          </p>
-          <p className="mt-3 text-sm text-ink-muted">{card.label}</p>
-        </div>
-      ))}
+    <div>
+      <div className="mb-3 inline-flex rounded-full border border-line bg-white p-0.5">
+        {(
+          [
+            { id: "program", label: "Program" },
+            { id: "weekly", label: "Weekly" },
+          ] as const
+        ).map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => setView(tab.id)}
+            className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+              view === tab.id ? "bg-ink text-white" : "text-ink-muted hover:text-ink"
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        {cards.map((card) => (
+          <div key={card.label} className="pulse-card-glow rounded-2xl border border-line p-5">
+            <p className="text-4xl leading-none font-bold tracking-tight text-ink tabular-nums">
+              {card.value}
+            </p>
+            <p className="mt-3 text-sm text-ink-muted">{card.label}</p>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

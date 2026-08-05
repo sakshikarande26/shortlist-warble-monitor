@@ -1,4 +1,5 @@
 import math
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -32,6 +33,23 @@ async def _insert_samples(post_id: str, points: list[tuple[float, int]]) -> None
             await dao.insert_sample(
                 session, post_id=post_id, views=views, likes=views // 10, comments=views // 100,
                 metrics_at="t", sim_hours=sim_hours, source="live",
+            )
+        await session.commit()
+
+
+async def _insert_timed_samples(
+    post_id: str,
+    points: list[tuple[float, int]],
+    *,
+    metrics_start: datetime,
+) -> None:
+    async with get_session() as session:
+        for sim_hours, views in points:
+            metrics_at = metrics_start + timedelta(hours=sim_hours)
+            await dao.insert_sample(
+                session, post_id=post_id, views=views, likes=views // 10, comments=views // 100,
+                metrics_at=metrics_at.isoformat(), sim_hours=sim_hours, source="live",
+                captured_at=metrics_at,
             )
         await session.commit()
 
@@ -234,6 +252,76 @@ async def test_home_section_membership_always_agrees_with_badge_text():
         assert post["status_label"] == "Worth watching", (
             f"watch_closely contains {post['post_id']!r} badged {post['status_label']!r}"
         )
+
+
+@pytest.mark.asyncio
+async def test_home_defaults_recent_changes_to_backend_six_hour_transition_window():
+    """First-open briefing fallback: without a real lastSeenAt, Home needs
+    a backend-derived six-hour window of real state transitions. Older
+    still-notable posts remain in Act now, but not in the recent-change
+    list.
+    """
+    metrics_start = datetime(2026, 1, 1, tzinfo=UTC)
+    await _seed_creator()
+    await _seed_post("wp_old_breakout")
+    await _insert_timed_samples(
+        "wp_old_breakout",
+        [(0.0, 2000), (1.0, 3000), (2.0, 4500), (3.0, 6750), (4.0, 10125)],
+        metrics_start=metrics_start,
+    )
+    await _seed_post("wp_recent_breakout")
+    await _insert_timed_samples(
+        "wp_recent_breakout",
+        [(5.0, 2000), (6.0, 3000), (7.0, 4500), (8.0, 6750), (9.0, 10125), (10.0, 15187)],
+        metrics_start=metrics_start,
+    )
+    await _seed_post("wp_clock")
+    await _insert_timed_samples("wp_clock", [(11.0, 100)], metrics_start=metrics_start)
+
+    body = await _get_home()
+
+    assert body["window_type"] == "last_6_hours"
+    assert body["window_start"] == datetime(2026, 1, 1, 5, tzinfo=UTC).isoformat()
+    assert body["window_end"] == datetime(2026, 1, 1, 11, tzinfo=UTC).isoformat()
+    assert {p["post_id"] for p in body["act_now"]} == {"wp_old_breakout", "wp_recent_breakout"}
+    assert [change["post"]["post_id"] for change in body["recent_changes"]] == ["wp_recent_breakout"]
+    assert body["recent_changes"][0]["from_state"] == "RISING"
+    assert body["recent_changes"][0]["to_state"] == "BREAKOUT"
+    assert body["recent_changes"][0]["to_status_label"] == "Taking off"
+    assert body["recent_changes"][0]["changed_at"] == datetime(2026, 1, 1, 9, tzinfo=UTC).isoformat()
+
+
+@pytest.mark.asyncio
+async def test_home_uses_since_timestamp_for_last_visit_transition_window():
+    """Repeat-visit briefing: when the frontend passes a real lastSeenAt,
+    the backend switches the same transition list to a since-last-visit
+    window and returns the exact boundaries it used.
+    """
+    metrics_start = datetime(2026, 1, 1, tzinfo=UTC)
+    await _seed_creator()
+    await _seed_post("wp_before_visit")
+    await _insert_timed_samples(
+        "wp_before_visit",
+        [(0.0, 2000), (1.0, 3000), (2.0, 4500), (3.0, 6750), (4.0, 10125)],
+        metrics_start=metrics_start,
+    )
+    await _seed_post("wp_after_visit")
+    await _insert_timed_samples(
+        "wp_after_visit",
+        [(5.0, 2000), (6.0, 3000), (7.0, 4500), (8.0, 6750), (9.0, 10125), (10.0, 15187)],
+        metrics_start=metrics_start,
+    )
+
+    since = datetime(2026, 1, 1, 8, 30, tzinfo=UTC)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/api/home", params={"since": since.isoformat()})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["window_type"] == "since_last_visit"
+    assert body["window_start"] == since.isoformat()
+    assert body["window_end"] == datetime(2026, 1, 1, 10, tzinfo=UTC).isoformat()
+    assert [change["post"]["post_id"] for change in body["recent_changes"]] == ["wp_after_visit"]
 
 
 @pytest.mark.asyncio
