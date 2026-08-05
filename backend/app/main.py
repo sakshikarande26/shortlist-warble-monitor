@@ -3,7 +3,10 @@ agent chat router, and — when a built frontend is present — serves it
 from this same process so the whole product is one deployable service.
 """
 
+import asyncio
+import logging
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -11,10 +14,44 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api.agent import router as agent_router
-from app.api.routes import router as api_router
+from sqlalchemy import text
 
-app = FastAPI(title="Warble Breakout Monitor")
+from app.api.agent import router as agent_router
+from app.api.routes import _DATASET_CACHE_TTL_SECONDS, _get_dataset, router as api_router
+from app.db.base import get_session
+
+logger = logging.getLogger(__name__)
+
+# Refresh a few seconds ahead of the cache's own TTL so a real page load
+# never has to pay for the fetch-and-recompute itself — it just reads
+# whatever this loop last put there. That's the actual fix for "every
+# reload takes 5-10s": the dashboard endpoints were computing the whole
+# watchlist on demand, on whichever request happened to land after the
+# cache went stale. Moving that work off the request path to a background
+# loop is enough on its own; it doesn't need a distributed system.
+_CACHE_WARM_INTERVAL_SECONDS = max(_DATASET_CACHE_TTL_SECONDS - 5, 5)
+
+
+async def _warm_dataset_cache_forever() -> None:
+    while True:
+        try:
+            async with get_session() as session:
+                await _get_dataset(session)
+        except Exception:
+            logger.exception("cache warmer: failed to refresh dataset cache")
+        await asyncio.sleep(_CACHE_WARM_INTERVAL_SECONDS)
+
+
+@asynccontextmanager
+async def _lifespan(_: FastAPI):
+    warmer = asyncio.create_task(_warm_dataset_cache_forever())
+    try:
+        yield
+    finally:
+        warmer.cancel()
+
+
+app = FastAPI(title="Warble Breakout Monitor", lifespan=_lifespan)
 app.include_router(api_router, prefix="/api")
 app.include_router(agent_router, prefix="/api")
 
@@ -33,7 +70,16 @@ app.add_middleware(
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok"}
+    # Liveness contract is unchanged (always 200 — an external monitor
+    # should still consider the process up), but now carries a real DB
+    # reachability signal instead of a static placeholder.
+    try:
+        async with get_session() as session:
+            await session.execute(text("SELECT 1"))
+        db_status = "ok"
+    except Exception:  # noqa: BLE001 - health check must never itself crash
+        db_status = "unreachable"
+    return {"status": "ok", "db": db_status}
 
 
 # --- Static frontend (production only) ---------------------------------

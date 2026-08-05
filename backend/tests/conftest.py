@@ -12,6 +12,7 @@ os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_tmpdir}/test.db"
 
 import pytest_asyncio  # noqa: E402
 
+from app.api import routes  # noqa: E402
 from app.db.base import Base, engine  # noqa: E402
 
 
@@ -20,4 +21,7 @@ async def _reset_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
+    # The dataset TTL cache (routes.py) is a module-level global — it must
+    # not survive across tests, or one test can see another's dropped data.
+    routes._dataset_cache = None
     yield

@@ -67,7 +67,6 @@ function BreakoutRow({ entry }: { entry: BreakoutLogEntry }) {
           <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-ink-muted/50" />
           {entry.current_status_label}
         </span>
-        <AlertMarker submitted={entry.alert_submitted} />
       </div>
 
       {entry.caption && (
@@ -85,13 +84,6 @@ function BreakoutRow({ entry }: { entry: BreakoutLogEntry }) {
           value={entry.growth_multiple !== null ? `${entry.growth_multiple.toFixed(1)}×` : "Not enough history"}
         />
       </div>
-
-      {!entry.alert_submitted && (
-        <p className="mt-3 text-xs text-ink-muted">
-          Detected in history. Not alerted live, this post broke out before the current detection
-          logic was deployed.
-        </p>
-      )}
     </Link>
   );
 }
@@ -102,22 +94,6 @@ function Stat({ label, value }: { label: string; value: string }) {
       <p className="text-[10px] tracking-wider text-ink-muted uppercase">{label}</p>
       <p className="mt-0.5 text-sm font-medium text-ink tabular-nums">{value}</p>
     </div>
-  );
-}
-
-// Greyscale, not a status color: this is about whether an alert was
-// actually submitted, which is a different axis from how the post is
-// performing. Never implies an alert was sent when it wasn't.
-function AlertMarker({ submitted }: { submitted: boolean }) {
-  return (
-    <span
-      className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] tracking-wide ${
-        submitted ? "bg-black/[0.07] text-ink" : "border border-line text-ink-muted"
-      }`}
-    >
-      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${submitted ? "bg-ink" : "bg-ink-muted/40"}`} />
-      {submitted ? "Alert sent" : "No alert"}
-    </span>
   );
 }
 

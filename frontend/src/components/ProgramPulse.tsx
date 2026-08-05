@@ -30,7 +30,10 @@ function cardsFor(view: View, program: ProgramPulseProps["program"], weekly: Pro
   if (view === "program") {
     return [
       { label: "Tracked posts", value: program.postsCount },
-      { label: "Needs attention", value: program.needsAttentionCount },
+      {
+        label: program.needsAttentionCount === 1 ? "Post needs attention" : "Posts need attention",
+        value: program.needsAttentionCount,
+      },
       { label: "Breakouts", value: program.breakoutsCount },
     ];
   }

@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.api import agent
+from app.api import agent, llm
 from app.db import dao
 from app.db.base import get_session
 from app.main import app
@@ -64,7 +64,7 @@ def _no_llm_key(monkeypatch):
     exports into os.environ). Clearing only one leaves the agent quietly
     live against the real API during tests."""
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.setattr(agent.settings, "anthropic_api_key", None)
+    monkeypatch.setattr(llm.settings, "anthropic_api_key", None)
 
 
 @pytest.mark.asyncio
@@ -83,7 +83,7 @@ async def test_falls_back_when_api_errors(monkeypatch):
     await _seed()
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
 
-    with patch("anthropic.AsyncAnthropic") as client_cls:
+    with patch("app.api.llm.AsyncAnthropic") as client_cls:
         client_cls.return_value.messages.create = AsyncMock(side_effect=RuntimeError("boom"))
         body = await _chat()
 
@@ -96,7 +96,7 @@ async def test_invented_number_is_rejected(monkeypatch):
     await _seed()
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
 
-    with patch("anthropic.AsyncAnthropic") as client_cls:
+    with patch("app.api.llm.AsyncAnthropic") as client_cls:
         client_cls.return_value.messages.create = AsyncMock(
             return_value=_fake_reply("This post pulled in 987654 views from a 42% lift.")
         )
@@ -107,7 +107,7 @@ async def test_invented_number_is_rejected(monkeypatch):
 
 
 def test_split_reply_separates_answer_and_reasoning():
-    answer, reasoning = agent._split_reply(
+    answer, reasoning = llm._split_reply(
         "ANSWER: Momentum held across checks.\nREASONING: The pace is the tell, not the raw reach."
     )
     assert answer == "Momentum held across checks."
@@ -117,7 +117,7 @@ def test_split_reply_separates_answer_and_reasoning():
 def test_split_reply_tolerates_missing_labels():
     """A reply that ignores the format is still a usable answer — it must
     never be dropped just because the labels weren't emitted."""
-    answer, reasoning = agent._split_reply("Just a plain answer with no labels.")
+    answer, reasoning = llm._split_reply("Just a plain answer with no labels.")
     assert answer == "Just a plain answer with no labels."
     assert reasoning is None
 
@@ -127,7 +127,7 @@ async def test_reasoning_is_returned_alongside_answer(monkeypatch):
     await _seed()
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
 
-    with patch("anthropic.AsyncAnthropic") as client_cls:
+    with patch("app.api.llm.AsyncAnthropic") as client_cls:
         client_cls.return_value.messages.create = AsyncMock(
             return_value=_fake_reply(
                 "ANSWER: Momentum has held rather than spiked.\n"
@@ -156,12 +156,12 @@ def test_grounded_numbers_accepts_scaled_suffix():
     """"40K" is a rounded restatement of a real 40000, not an invented
     number — the guardrail must normalize the suffix before comparing."""
     facts = {"selected_post": {"recent_gain_views": 40000}}
-    assert agent._numbers_are_grounded("It picked up about 40K views.", facts)
+    assert llm._numbers_are_grounded("It picked up about 40K views.", facts)
 
 
 def test_grounded_numbers_still_rejects_invented_scaled_number():
     facts = {"selected_post": {"recent_gain_views": 40000}}
-    assert not agent._numbers_are_grounded("It picked up about 900K views.", facts)
+    assert not llm._numbers_are_grounded("It picked up about 900K views.", facts)
 
 
 @pytest.mark.asyncio
@@ -183,7 +183,7 @@ async def test_grounded_reply_is_kept(monkeypatch):
     await _seed()
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
 
-    with patch("anthropic.AsyncAnthropic") as client_cls:
+    with patch("app.api.llm.AsyncAnthropic") as client_cls:
         client_cls.return_value.messages.create = AsyncMock(
             return_value=_fake_reply("Momentum has held rather than spiked once. Worth a look.")
         )
@@ -202,7 +202,7 @@ async def test_reply_contradicting_status_is_rejected(monkeypatch):
         actual = (await client.get("/api/posts/wp_a")).json()["status_label"]
     wrong = "Steady" if actual != "Steady" else "Taking off"
 
-    with patch("anthropic.AsyncAnthropic") as client_cls:
+    with patch("app.api.llm.AsyncAnthropic") as client_cls:
         client_cls.return_value.messages.create = AsyncMock(
             return_value=_fake_reply(f"This one is {wrong} and not worth your time.")
         )
@@ -264,16 +264,30 @@ def test_creator_breakout_tally_counts_only_relevant_handles_and_caps():
     assert len(tally) == 5
 
 
-def test_program_level_quick_prompts_return_distinct_text():
-    """The offline fallback router's whole job is not collapsing different
-    questions onto the same summary — this pins that down for every
-    program-level quick prompt in AiPanel.tsx."""
+def test_offline_answer_is_grounded_and_honest_for_selected_post():
+    """offline_answer() is the sole fallback now (no per-intent routing) —
+    it must still be a real, grounded statement about the selected post,
+    not a placeholder."""
+    selected = {
+        "creator_handle": "a",
+        "status": "Taking off",
+        "baseline_multiple": 2.4,
+        "baseline_compared_to": "creator",
+        "consecutive_elevated_checks": 3,
+        "alert_sent": False,
+    }
+    facts = {"selected_post": selected, "program": {}, "alerts": [], "breakouts": [], "top_movers": []}
+    text = agent.offline_answer(facts)
+    assert "@a" in text
+    assert "taking off" in text.lower()
+
+
+def test_offline_answer_is_grounded_and_honest_for_program():
     facts = {
         "program": {
             "posts_watched": 10,
             "creators_watched": 4,
             "status_counts": {"Taking off": 1, "Worth watching": 2, "Steady": 6, "Unavailable": 1},
-            "current_sim_hour": 40.0,
             "window_progress": "Day 2 of 7",
         },
         "alerts": [{"post_id": "wp_a", "creator_handle": "a", "submitted": True}],
@@ -283,33 +297,11 @@ def test_program_level_quick_prompts_return_distinct_text():
         "selected_post": None,
         "top_movers": [{"creator_handle": "b", "status": "Worth watching", "baseline_multiple": 2.1}],
     }
-    prompts = [
-        "What changed since I checked?",
-        "What deserves attention first?",
-        "Give me a stakeholder update",
-        "What have we alerted on so far?",
-    ]
-    answers = [agent.deterministic_answer(facts, p) for p in prompts]
-    assert len(set(answers)) == len(answers), answers
-
-
-def test_post_selected_quick_prompts_return_distinct_text():
-    selected = {
-        "creator_handle": "a",
-        "status": "Taking off",
-        "baseline_multiple": 2.4,
-        "baseline_compared_to": "creator",
-        "consecutive_elevated_checks": 3,
-        "alert_sent": False,
-        "is_creators_best_so_far": True,
-        "most_recent_other_breakout": {"creator_handle": "b", "climbed_multiple": 1.8},
-    }
-    facts = {"selected_post": selected, "program": {}, "alerts": [], "breakouts": [], "top_movers": []}
-    prompts = [
-        "Why does this matter?",
-        "Sustained or a spike?",
-        "Explain this for leadership",
-        "What would change your read?",
-    ]
-    answers = [agent.deterministic_answer(facts, p) for p in prompts]
-    assert len(set(answers)) == len(answers), answers
+    text = agent.offline_answer(facts)
+    # Terse by design: the taking-off/watching counts and the window's
+    # breakout/alert tallies, not a "we're watching N posts across M
+    # creators" recap — that boilerplate read as canned filler.
+    assert "1 taking off" in text
+    assert "2 worth watching" in text
+    assert "1 breakouts" in text or "1 breakout" in text
+    assert "1 alerts" in text or "1 alert" in text

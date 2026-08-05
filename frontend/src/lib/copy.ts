@@ -129,6 +129,20 @@ export function creatorInsight(detail: Pick<PostDetail, "creator" | "evidence">)
     : `${audience} Too few other posts from them to compare against yet, so this is measured ${multiple} against the post's own earlier pace.`;
 }
 
+/** Warble's own timestamp strings (metrics_at/metrics_cached_at) are
+ * sometimes timezone-naive (no trailing Z or ±HH:MM). The backend treats a
+ * naive timestamp as UTC (routes.py's _as_utc()) before doing any date
+ * math; `new Date(...)` does not — a naive string is parsed as local
+ * browser time instead, silently shifting the displayed time (and
+ * sometimes the calendar date itself, near midnight) by the viewer's UTC
+ * offset. This mirrors the backend's rule so both sides agree. */
+function parseApiTimestamp(iso: string | null): Date | null {
+  if (!iso) return null;
+  const hasTimezone = /Z$|[+-]\d{2}:\d{2}$/.test(iso);
+  const date = new Date(hasTimezone ? iso : `${iso}Z`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
 /** Sim time isn't wall-clock time, so freshness has to be phrased relative
  * to the most recent known sim_hours (current_sim_hours from the API),
  * never derived from Date.now(). */
@@ -149,8 +163,8 @@ export function formatRelativeSimTime(
   if (delta < 1 / 60) return "Updated moments ago";
 
   if (delta >= 24 * DAYS_BEFORE_ABSOLUTE_DATE && latestMetricsAt) {
-    const date = new Date(latestMetricsAt);
-    if (!Number.isNaN(date.getTime())) {
+    const date = parseApiTimestamp(latestMetricsAt);
+    if (date) {
       return `Updated ${date.toLocaleDateString(undefined, {
         weekday: "short",
         day: "numeric",
@@ -198,9 +212,8 @@ export function isStale(latestSimHours: number | null, currentSimHours: number |
  * timestamp stored on the sample itself, never a value derived from
  * sim_hours. */
 export function formatMoment(isoTimestamp: string | null): string {
-  if (!isoTimestamp) return "Time not recorded";
-  const date = new Date(isoTimestamp);
-  if (Number.isNaN(date.getTime())) return "Time not recorded";
+  const date = parseApiTimestamp(isoTimestamp);
+  if (!date) return "Time not recorded";
   return date.toLocaleString(undefined, {
     weekday: "short",
     day: "numeric",
@@ -212,9 +225,8 @@ export function formatMoment(isoTimestamp: string | null): string {
 }
 
 export function formatPublishedAt(publishedAt: string | null): string {
-  if (!publishedAt) return "Publish time unknown";
-  const date = new Date(publishedAt);
-  if (Number.isNaN(date.getTime())) return "Publish time unknown";
+  const date = parseApiTimestamp(publishedAt);
+  if (!date) return "Publish time unknown";
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
@@ -419,20 +431,37 @@ export interface AgentReference {
 interface AgentFactsEntity {
   post_id?: string;
   creator_handle?: string;
+  creator_followers?: number | null;
   caption?: string | null;
   status?: string;
   status_now?: string;
+  is_available?: boolean;
+  current_views?: number | null;
+  post_age_hours?: number | null;
+  views_per_hour?: number | null;
   recent_gain_views?: number | null;
   recent_gain_window_hours?: number | null;
   baseline_multiple?: number | null;
   consecutive_elevated_checks?: number | null;
+  is_creators_best_so_far?: boolean | null;
+  rank_among_creators_posts?: number | null;
+  creators_post_count?: number | null;
   climbed_multiple?: number | null;
   peak_views?: number | null;
+  views_at_breakout?: number | null;
+  breakout_sim_hour?: number | null;
   submitted?: boolean;
+  submitted_sim_hour?: number | null;
 }
 
+// Every chip is a distinct number pulled straight from the entity — no two
+// chips ever restate the same fact in different words, and which fields are
+// present (selected post vs. mover vs. alert vs. breakout row) naturally
+// varies which chips show up, so cards don't all read the same shape.
 function toReference(entity: AgentFactsEntity): AgentReference {
   const facts: string[] = [];
+  if (entity.current_views != null) facts.push(`${formatViews(entity.current_views)} now`);
+  if (entity.views_per_hour != null) facts.push(`${formatViews(Math.round(entity.views_per_hour))}/hr`);
   if (entity.recent_gain_views != null) {
     const gain = `+${entity.recent_gain_views.toLocaleString()}`;
     facts.push(
@@ -445,9 +474,24 @@ function toReference(entity: AgentFactsEntity): AgentReference {
   if (entity.consecutive_elevated_checks != null && entity.consecutive_elevated_checks >= 2) {
     facts.push(`${entity.consecutive_elevated_checks} elevated checks`);
   }
+  if (entity.is_creators_best_so_far === true) {
+    facts.push("Creator's best post so far");
+  } else if (entity.rank_among_creators_posts != null && entity.creators_post_count != null) {
+    facts.push(`#${entity.rank_among_creators_posts} of ${entity.creators_post_count} for this creator`);
+  }
   if (entity.climbed_multiple != null) facts.push(`${entity.climbed_multiple.toFixed(1)}× since breakout`);
   if (entity.peak_views != null) facts.push(`${formatViews(entity.peak_views)} peak`);
-  if (entity.submitted === true) facts.push("Alert sent");
+  else if (entity.views_at_breakout != null) facts.push(`${formatViews(entity.views_at_breakout)} at breakout`);
+  if (entity.post_age_hours != null) facts.push(`${formatWindow(entity.post_age_hours)} old`);
+  if (entity.creator_followers != null) facts.push(`${formatViews(entity.creator_followers)} followers`);
+  if (entity.submitted === true) {
+    facts.push(
+      entity.submitted_sim_hour != null ? `Alert sent at hour ${entity.submitted_sim_hour}` : "Alert sent",
+    );
+  } else if (entity.submitted === false) {
+    facts.push("No alert sent");
+  }
+  if (entity.is_available === false) facts.push("No longer available");
 
   return {
     postId: entity.post_id ?? null,

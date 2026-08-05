@@ -107,6 +107,16 @@ function HomeContent({
 
   return (
     <div className="space-y-8">
+      {/* Hierarchy, top to bottom: the one-line read first (what matters
+          most, in plain language), then the numbers behind it, then what
+          changed, then the full triage lists. Someone new to the app should
+          be able to stop reading after the headline and already know what
+          this product does. */}
+      <Briefing
+        actNowCount={act_now.length}
+        watchCount={watch_closely.length}
+        unavailableCount={unavailable_count}
+      />
       <ProgramPulse
         program={{
           postsCount: total_posts,
@@ -118,12 +128,6 @@ function HomeContent({
           newCount: new_posts.length,
           removedCount: unavailable_count,
         }}
-      />
-
-      <Briefing
-        actNowCount={act_now.length}
-        watchCount={watch_closely.length}
-        unavailableCount={unavailable_count}
       />
       <WhileAwaySection
         changes={data.recent_changes ?? []}

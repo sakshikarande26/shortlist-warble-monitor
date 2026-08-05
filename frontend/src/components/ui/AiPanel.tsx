@@ -30,30 +30,14 @@ const PROGRAM_PROMPTS = [
 // card of its own.
 export function AiPanel({ onClose }: AiPanelProps) {
   const { activePost } = useSelection();
-  const { messages, isSending, send, greet, endChat } = useAgentChat();
+  const { messages, isSending, send, endChat } = useAgentChat();
   const [input, setInput] = useState("");
   const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
-  // Guards the one-time opening line against React StrictMode's dev-mode
-  // double-invoke of mount effects — without this, the async greet() call
-  // fires twice before the first reply lands and messages.length is still
-  // 0 for both, producing two identical opening messages.
-  const hasGreetedRef = useRef(false);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, isSending]);
-
-  // Opens with something already said, not a blank "how can I help" —
-  // fires once, only on a genuinely fresh conversation (never replays on
-  // a reopen once there's real history).
-  useEffect(() => {
-    if (messages.length === 0 && !hasGreetedRef.current) {
-      hasGreetedRef.current = true;
-      void greet(activePost?.post_id ?? null);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // Once a suggested prompt has actually been asked (as a real user turn,
   // however it was sent — clicked or typed), it drops out of the
@@ -222,15 +206,18 @@ function Turn({ message }: { message: AgentMessage }) {
         {hasEvidence && (
           <div className="rounded-2xl border border-line bg-white p-4 sm:p-5">
             {message.reasoning && (
-              <p className="text-sm leading-relaxed text-ink">{message.reasoning}</p>
+              <div>
+                <p className="text-[10px] font-medium tracking-wider text-ink-muted uppercase">
+                  Why
+                </p>
+                <p className="mt-1 text-sm leading-relaxed text-ink">{message.reasoning}</p>
+              </div>
             )}
             {references.length > 0 && (
-              <div className={message.reasoning ? "mt-3 space-y-2" : "space-y-2"}>
-                {references.length > 1 && (
-                  <p className="text-[10px] font-medium tracking-wider text-ink-muted uppercase">
-                    Sources
-                  </p>
-                )}
+              <div className={message.reasoning ? "mt-4 space-y-2 border-t border-line pt-3" : "space-y-2"}>
+                <p className="text-[10px] font-medium tracking-wider text-ink-muted uppercase">
+                  Sources
+                </p>
                 {references.map((reference) => (
                   <ReferenceCard key={reference.handle} reference={reference} />
                 ))}

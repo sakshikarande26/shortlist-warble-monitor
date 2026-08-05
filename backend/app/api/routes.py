@@ -3,6 +3,7 @@ never calls the Warble API, never touches collector/detector/alert logic.
 """
 
 import statistics
+import time
 from datetime import UTC, datetime, timedelta
 from collections import defaultdict
 from collections.abc import AsyncIterator
@@ -115,6 +116,15 @@ async def _current_sim_hours(session: AsyncSession) -> float | None:
     frontend needs to phrase last-updated times honestly, since sim time
     isn't wall-clock time and can't be derived from Date.now()."""
     return (await session.execute(select(func.max(Sample.sim_hours)))).scalar()
+
+
+def _current_sim_hours_from_samples(samples_by_post: dict[str, list[Sample]]) -> float | None:
+    """Same value as _current_sim_hours(), read off an already-fetched
+    samples_by_post instead of a fresh query — keeps a cached-dataset
+    response internally consistent (never a current_sim_hours newer than
+    the samples it was actually computed from)."""
+    all_hours = [s.sim_hours for samples in samples_by_post.values() for s in samples]
+    return max(all_hours, default=None)
 
 
 async def _samples_by_post(session: AsyncSession, post_ids: list[str]) -> dict[str, list[Sample]]:
@@ -453,18 +463,42 @@ def _build_recent_changes(
     )
 
 
+_DATASET_CACHE_TTL_SECONDS = 20
+_dataset_cache: tuple[float, tuple] | None = None
+
+
+async def _get_dataset(session: AsyncSession):
+    """Shared, short-TTL cache of the full creators/posts/samples fetch and
+    whole-watchlist momentum computation — the expensive part (a full
+    Supabase round trip plus recompute) that get_home/get_posts_board/
+    get_status/get_breakout_log each redid independently on every request.
+    The underlying data only changes as often as the collector's live-
+    sample cadence (15 minutes), so a ~20s cache costs no real freshness —
+    every response built from it is still at most 20s stale — while cutting
+    repeat-navigation latency to near zero within that window.
+    """
+    global _dataset_cache
+    now = time.monotonic()
+    if _dataset_cache is not None and now - _dataset_cache[0] < _DATASET_CACHE_TTL_SECONDS:
+        return _dataset_cache[1]
+
+    creators = {c.id: c for c in (await session.execute(select(Creator))).scalars().all()}
+    posts = (await session.execute(select(Post))).scalars().all()
+    samples_by_post = await _samples_by_post(session, [p.id for p in posts])
+    followers_by_creator = {cid: c.followers for cid, c in creators.items()}
+    computations = _compute_posts(posts, samples_by_post, followers_by_creator)
+
+    data = (creators, posts, samples_by_post, followers_by_creator, computations)
+    _dataset_cache = (now, data)
+    return data
+
+
 @router.get("/home", response_model=HomeResponse)
 async def get_home(
     since: datetime | None = Query(default=None),
     session: AsyncSession = Depends(get_db),
 ) -> HomeResponse:
-    creators = {c.id: c for c in (await session.execute(select(Creator))).scalars().all()}
-    posts = (await session.execute(select(Post))).scalars().all()
-    post_ids = [p.id for p in posts]
-    samples_by_post = await _samples_by_post(session, post_ids)
-    followers_by_creator = {cid: c.followers for cid, c in creators.items()}
-
-    computations = _compute_posts(posts, samples_by_post, followers_by_creator)
+    creators, posts, samples_by_post, followers_by_creator, computations = await _get_dataset(session)
     home_posts = _build_home_posts(posts, creators, computations)
 
     # Section membership matches status_label exactly: Act now is only
@@ -528,7 +562,7 @@ async def get_home(
         window_type=window_type,
         total_posts=len(posts),
         unavailable_count=sum(1 for p in home_posts.values() if p.is_gone),
-        current_sim_hours=await _current_sim_hours(session),
+        current_sim_hours=_current_sim_hours_from_samples(samples_by_post),
     )
 
 
@@ -539,13 +573,7 @@ async def get_posts_board(session: AsyncSession = Depends(get_db)) -> PostsBoard
     shows a capped set of highlights (act_now/watch_closely/new_posts);
     this is the complete, unfiltered list behind it, for the marketer who
     wants to scan everything at once rather than just what's flagged."""
-    creators = {c.id: c for c in (await session.execute(select(Creator))).scalars().all()}
-    posts = (await session.execute(select(Post))).scalars().all()
-    post_ids = [p.id for p in posts]
-    samples_by_post = await _samples_by_post(session, post_ids)
-    followers_by_creator = {cid: c.followers for cid, c in creators.items()}
-
-    computations = _compute_posts(posts, samples_by_post, followers_by_creator)
+    creators, posts, samples_by_post, _, computations = await _get_dataset(session)
     home_posts = _build_home_posts(posts, creators, computations)
 
     ranked = sorted(
@@ -557,7 +585,7 @@ async def get_posts_board(session: AsyncSession = Depends(get_db)) -> PostsBoard
     return PostsBoardResponse(
         posts=ranked,
         total_posts=len(posts),
-        current_sim_hours=await _current_sim_hours(session),
+        current_sim_hours=_current_sim_hours_from_samples(samples_by_post),
     )
 
 
@@ -565,13 +593,7 @@ async def get_posts_board(session: AsyncSession = Depends(get_db)) -> PostsBoard
 async def get_status(session: AsyncSession = Depends(get_db)) -> SystemStatus:
     """Backs the right-hand panel's idle state — real system context
     instead of a placeholder, when no post is selected."""
-    creators = {c.id: c for c in (await session.execute(select(Creator))).scalars().all()}
-    posts = (await session.execute(select(Post))).scalars().all()
-    post_ids = [p.id for p in posts]
-    samples_by_post = await _samples_by_post(session, post_ids)
-    followers_by_creator = {cid: c.followers for cid, c in creators.items()}
-
-    computations = _compute_posts(posts, samples_by_post, followers_by_creator)
+    creators, posts, samples_by_post, _, computations = await _get_dataset(session)
 
     # "Most recent status change" without persisting a transition-event
     # log: the most recently-updated post that's currently notable is an
@@ -616,7 +638,7 @@ async def get_status(session: AsyncSession = Depends(get_db)) -> SystemStatus:
 
     return SystemStatus(
         posts_tracked=len(posts),
-        last_checked_sim_hours=await _current_sim_hours(session),
+        last_checked_sim_hours=_current_sim_hours_from_samples(samples_by_post),
         most_notable_post=most_notable_post,
         most_recent_alert=most_recent_alert,
         alerts_sent=alerts_sent,
@@ -632,11 +654,7 @@ async def get_breakout_log(session: AsyncSession = Depends(get_db)) -> BreakoutL
     decide membership. A post can therefore appear here without an alert:
     it broke out under logic that wasn't deployed yet when it happened.
     """
-    creators = {c.id: c for c in (await session.execute(select(Creator))).scalars().all()}
-    posts = (await session.execute(select(Post))).scalars().all()
-    samples_by_post = await _samples_by_post(session, [p.id for p in posts])
-    followers_by_creator = {cid: c.followers for cid, c in creators.items()}
-    computations = _compute_posts(posts, samples_by_post, followers_by_creator)
+    creators, posts, samples_by_post, _, computations = await _get_dataset(session)
 
     submitted_ids = {
         row.post_id
@@ -694,7 +712,7 @@ async def get_breakout_log(session: AsyncSession = Depends(get_db)) -> BreakoutL
         )
 
     entries.sort(key=lambda e: e.breakout_sim_hours, reverse=True)
-    return BreakoutLogResponse(entries=entries, current_sim_hours=await _current_sim_hours(session))
+    return BreakoutLogResponse(entries=entries, current_sim_hours=_current_sim_hours_from_samples(samples_by_post))
 
 
 @router.get("/posts/{post_id}", response_model=PostDetail)
@@ -762,11 +780,8 @@ async def get_post_detail(post_id: str, session: AsyncSession = Depends(get_db))
 
 @router.get("/creators", response_model=CreatorsResponse)
 async def get_creators(session: AsyncSession = Depends(get_db)) -> CreatorsResponse:
-    creators = (await session.execute(select(Creator))).scalars().all()
-    posts = (await session.execute(select(Post))).scalars().all()
-    post_ids = [p.id for p in posts]
-    samples_by_post = await _samples_by_post(session, post_ids)
-    followers_by_creator = {c.id: c.followers for c in creators}
+    creators_by_id, posts, samples_by_post, followers_by_creator, _ = await _get_dataset(session)
+    creators = list(creators_by_id.values())
 
     posts_by_creator: dict[str, list[Post]] = defaultdict(list)
     for post in posts:
@@ -835,7 +850,7 @@ async def get_creators(session: AsyncSession = Depends(get_db)) -> CreatorsRespo
         )
 
     entries.sort(key=lambda e: (e.needs_attention_count, e.followers), reverse=True)
-    return CreatorsResponse(creators=entries, current_sim_hours=await _current_sim_hours(session))
+    return CreatorsResponse(creators=entries, current_sim_hours=_current_sim_hours_from_samples(samples_by_post))
 
 
 @router.get("/creators/{creator_id}", response_model=CreatorDetailResponse)

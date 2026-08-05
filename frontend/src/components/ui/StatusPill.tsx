@@ -27,9 +27,21 @@ export function statusTextColorClass(label: string): string {
   return STATUS_TEXT_COLOR[label] ?? "text-ink-muted";
 }
 
+// One-line plain-language meaning per status, shown as a native tooltip.
+// StatusPill renders everywhere a post's status appears (Home, Creators,
+// Posts board, Breakout log, post detail, agent references) so this one
+// map is what answers "what does this word mean" across the whole app.
+const STATUS_EXPLANATION: Record<string, string> = {
+  "Taking off": "Sustained growth well above normal for several checks in a row",
+  "Worth watching": "Growing faster than usual for this creator right now",
+  Steady: "No unusual movement",
+  Unavailable: "No longer live on Warble",
+};
+
 export function StatusPill({ label }: { label: string }) {
   return (
     <span
+      title={STATUS_EXPLANATION[label]}
       className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] tracking-wide ${PILL_STYLES[label] ?? "bg-black/[0.04] text-ink-muted"}`}
     >
       <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${DOT_COLOR[label] ?? "bg-ink-muted"}`} />
