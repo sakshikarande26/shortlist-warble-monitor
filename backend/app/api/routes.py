@@ -194,6 +194,35 @@ def _consecutive_qualifying(signals: list[IntervalSignal]) -> int:
     return count
 
 
+def _count_published_in_window(
+    posts, latest_sample_at: datetime | None, current_sim_hours: float | None
+) -> int:
+    """How many tracked posts were actually PUBLISHED inside the monitoring
+    window — the honest answer to "new posts this week".
+
+    The window's real-world start is derived from the data rather than
+    configured: the most recent reading happened at `current_sim_hours` into
+    the run, so winding that many hours back off its real timestamp lands on
+    sim hour zero. Posts published before that existed before we started
+    watching and aren't new; they're just newly observed by us.
+    """
+    if latest_sample_at is None or current_sim_hours is None:
+        return 0
+    window_origin = latest_sample_at - timedelta(hours=current_sim_hours)
+
+    count = 0
+    for post in posts:
+        if not post.published_at:
+            continue
+        try:
+            published = _as_utc(datetime.fromisoformat(post.published_at.replace("Z", "+00:00")))
+        except ValueError:
+            continue  # unparseable upstream timestamp is not evidence of newness
+        if published >= window_origin:
+            count += 1
+    return count
+
+
 def _is_rankable_movement(latest_signal: IntervalSignal) -> bool:
     """Is the latest interval's movement big enough to be worth comparing at
     all? See _MIN_RANKABLE_GAIN_VIEWS / _MIN_RANKABLE_GROWTH_PCT — this is a
@@ -603,6 +632,9 @@ async def get_home(
         window_type=window_type,
         total_posts=len(posts),
         unavailable_count=sum(1 for p in home_posts.values() if p.is_gone),
+        new_posts_this_week=_count_published_in_window(
+            posts, latest_sample_at, _current_sim_hours_from_samples(samples_by_post)
+        ),
         current_sim_hours=_current_sim_hours_from_samples(samples_by_post),
     )
 

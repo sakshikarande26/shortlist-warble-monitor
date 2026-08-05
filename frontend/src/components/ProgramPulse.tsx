@@ -7,7 +7,7 @@ interface ProgramPulseProps {
     breakoutsCount: number;
   };
   weekly: {
-    alertsReceivedCount: number;
+    flaggedCount: number;
     newCount: number;
     removedCount: number;
   };
@@ -38,7 +38,7 @@ function cardsFor(view: View, program: ProgramPulseProps["program"], weekly: Pro
     ];
   }
   return [
-    { label: "Alerts received", value: weekly.alertsReceivedCount },
+    { label: "Flagged this week", value: weekly.flaggedCount },
     { label: "New posts this week", value: weekly.newCount },
     { label: "Removed this week", value: weekly.removedCount },
   ];

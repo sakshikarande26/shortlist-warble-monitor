@@ -105,18 +105,32 @@ async def upsert_post(
     first_seen_at: datetime.datetime | None = None,
 ) -> Post:
     post = await session.get(Post, id)
+    # Mutable on every sweep: these can genuinely change upstream (a caption
+    # edit) and the latest value is the right one.
     fields = dict(
         creator_id=creator_id,
         caption=caption,
         published_at=published_at,
         platform=platform,
-        first_seen_sim_hours=first_seen_sim_hours,
-        first_seen_at=first_seen_at or _utcnow(),
     )
     if post is None:
-        post = Post(id=id, **fields)
+        # Write-once: only ever set when the row is created.
+        post = Post(
+            id=id,
+            first_seen_sim_hours=first_seen_sim_hours,
+            first_seen_at=first_seen_at or _utcnow(),
+            **fields,
+        )
         session.add(post)
     else:
+        # first_seen_* deliberately NOT reassigned here. Including them in
+        # the update set meant every discovery sweep rewrote "first seen" to
+        # "now" — 210 of 211 live posts ended up sharing the last sweep's
+        # sim_hours, so the column recorded last-seen and no post had a real
+        # age. That isn't just a cosmetic mislabel: _compute_posts derives
+        # post_age from it, and _creator_pace_ratio picks baseline
+        # neighbours by "other posts at a similar age", so every post was
+        # being compared at age ~0 against every other post at age ~0.
         for key, value in fields.items():
             setattr(post, key, value)
     await session.flush()

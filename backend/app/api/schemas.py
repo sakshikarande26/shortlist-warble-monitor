@@ -90,6 +90,11 @@ class HomeResponse(BaseModel):
     window_type: Literal["last_6_hours", "since_last_visit"]
     total_posts: int  # distinguishes "nothing tracked yet" from "nothing moving right now"
     unavailable_count: int
+    # Posts PUBLISHED inside the monitoring window — a real, uncapped count.
+    # `new_posts` above is a capped triage list (5 max), so using its length
+    # as a metric reported the cap rather than the truth: the dashboard read
+    # "5 new posts this week" no matter how many there actually were.
+    new_posts_this_week: int
     current_sim_hours: float | None
 
 

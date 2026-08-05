@@ -115,8 +115,8 @@ function HomeContent({
           breakoutsCount: breakouts.entries.length,
         }}
         weekly={{
-          alertsReceivedCount: status.alerts_sent,
-          newCount: new_posts.length,
+          flaggedCount: status.alerts_sent,
+          newCount: data.new_posts_this_week,
           removedCount: unavailable_count,
         }}
       />

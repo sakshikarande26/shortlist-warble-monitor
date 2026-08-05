@@ -6,6 +6,7 @@ from app.collector.budget import BudgetTracker
 from app.db import dao
 from app.db.base import get_session
 from app.db.models import Alert as AlertRow
+from app.db.models import Post as PostRow
 from tests.collector.fakes import FakeWarbleClient
 
 
@@ -158,6 +159,37 @@ async def test_sync_alerts_preserves_first_decided_sim_hours():
     assert row.is_duplicate is False
     # The server's receipt details still get backfilled onto our row.
     assert row.received_sim_hours == 3.0
+
+
+@pytest.mark.asyncio
+async def test_upsert_post_never_rewrites_first_seen():
+    """Real bug: first_seen_sim_hours was in the update set, so every 6-hourly
+    discovery sweep rewrote it to "now". 210 of 211 live posts ended up
+    sharing the last sweep's timestamp, leaving no post with a real age —
+    and _creator_pace_ratio picks its baseline from "other posts at a
+    similar age", so everything was compared at age ~0.
+    """
+    async with get_session() as session:
+        await dao.upsert_creator(
+            session, id="wc_0000000001", handle="h", name="n", platform="p",
+            followers=0, fetched_at_sim_hours=0.0,
+        )
+        await dao.upsert_post(
+            session, id="wp_0000000001", creator_id="wc_0000000001",
+            platform="p", first_seen_sim_hours=3.5, caption="original",
+        )
+        await session.commit()
+
+        # A later sweep sees the same post again, much later in the run.
+        await dao.upsert_post(
+            session, id="wp_0000000001", creator_id="wc_0000000001",
+            platform="p", first_seen_sim_hours=136.7, caption="edited caption",
+        )
+        await session.commit()
+        post = await session.get(PostRow, "wp_0000000001")
+
+    assert post.first_seen_sim_hours == 3.5  # when we FIRST saw it, not last
+    assert post.caption == "edited caption"  # mutable fields still refresh
 
 
 @pytest.mark.asyncio

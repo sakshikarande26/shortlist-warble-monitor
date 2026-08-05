@@ -77,6 +77,7 @@ export interface HomeResponse {
   window_type: "last_6_hours" | "since_last_visit";
   total_posts: number;
   unavailable_count: number;
+  new_posts_this_week: number;
   current_sim_hours: number | null;
 }
 
