@@ -2,10 +2,13 @@
 
 **Content breakout detection for brand-creator programs on social media**
 
-(Built for the Shortlist AI Product Engineering) 
-
 ---
 
+**Deployed:** [Open Project](https://shortlist-warble-monitor-production.up.railway.app/)
+
+**Walkthrough:** [Notion](https://shortlist-assessment.notion.site/Product-Decisions-Experiments-Shortlist-s-Take-home-3b3658fa60068062bbc9db533037efda?pvs=73)
+
+---
 ## What this is
 
 LongSheet runs a ~40-creator program on Warble. View counts move in real
@@ -120,9 +123,6 @@ uv run alembic upgrade head
 uv run python -m app.collector.loop
 ```
 
-**Deployed:** [Open Project](https://shortlist-warble-monitor-production.up.railway.app/)
-
-**Walkthrough:** [Notion](https://hilarious-taxi-8db.notion.site/Product-Decisions-Experiments-Shortlist-s-Take-home-3b3658fa60068062bbc9db533037efda?source=copy_link)
 
 ---
 
@@ -180,11 +180,23 @@ about.
 only explains, every AI claim traces to a real number or gets thrown out
 - One tight product slice over a broad platform
 
+## Scope
+
+Four screens, each answering one marketer question, nothing more:
+
+- **Home** — what changed, what needs attention now
+- **Posts** — the complete tracked set, for when you want to browse
+  rather than be told
+- **Creators** — who's in the program and who's performing
+- **Breakouts** — the full history of what's taken off, and whether
+  it was alerted live
+
 ## What I skipped intentionally
 
-- A full posts/creators browsing app: kept to home, post detail, creators and breakout history
-- Any comparison/reporting surface: not what someone checking twice a
-day needs first
+- Any comparison/reporting surface beyond what's on Post detail — not
+  what someone checking twice a day needs first
+- Campaign management, budgets, contracts, ROAS — Warble doesn't
+  provide this data, so building it would mean fabricating
 
 ---
 

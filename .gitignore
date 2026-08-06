@@ -147,7 +147,5 @@ vite.config.ts.timestamp-*
 .vite/
 
 /docs/WORKFLOW.md
-
-
 .claude/
 
