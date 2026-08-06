@@ -43,6 +43,20 @@
      coral-family to echo "Taking off." Nothing else pulls from this. */
   --color-tint-breakout: #fdb19b; /* peach */
 
+  /* Monitoring health (nav indicator, /status page): is the COLLECTOR
+     still running, not how any one post is performing — a separate
+     vocabulary from taking-off/watching/unavailable above, so a future
+     change to one can't accidentally recolor the other even though the
+     good/bad hues happen to match. Amber is the one new hue this signal
+     needs; live/interrupted deliberately reuse the app's existing
+     green/red "good"/"bad" meaning rather than inventing a third pair. */
+  --color-monitor-live: #2f9e5c;
+  --color-monitor-live-soft: #e6f6ec;
+  --color-monitor-delayed: #d99a2b;
+  --color-monitor-delayed-soft: #faf1dc;
+  --color-monitor-interrupted: #c94a3f;
+  --color-monitor-interrupted-soft: #fbeae8;
+
   --animate-fade-in: board-fade-in 0.35s ease-out both;
 }
 

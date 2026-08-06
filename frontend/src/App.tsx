@@ -9,6 +9,7 @@ import { PostDetail } from "./pages/PostDetail";
 import { PostsBoard } from "./pages/PostsBoard";
 import { BreakoutLog } from "./pages/BreakoutLog";
 import { UnavailablePosts } from "./pages/UnavailablePosts";
+import { Status } from "./pages/Status";
 
 function App() {
   return (
@@ -24,6 +25,7 @@ function App() {
             <Route path="/posts/:postId" element={<PostDetail />} />
             <Route path="/breakouts" element={<BreakoutLog />} />
             <Route path="/unavailable" element={<UnavailablePosts />} />
+            <Route path="/status" element={<Status />} />
           </Route>
         </Routes>
       </BrowserRouter>

@@ -31,6 +31,7 @@ from app.api.schemas import (
     NotablePost,
     PostDetail,
     PostsBoardResponse,
+    SamplingCoverageTick,
     SystemStatus,
     TrajectoryPoint,
 )
@@ -96,6 +97,18 @@ _DEFAULT_RECENT_WINDOW_HOURS = 6.0
 _MIN_RANKABLE_GAIN_VIEWS = 25
 _MIN_RANKABLE_GROWTH_PCT = 0.5
 
+# --- Wall-clock monitoring liveness (nav indicator / /status page). Live
+# sampling runs every 15 minutes (collector/loop.py's LIVE_SAMPLE_INTERVAL_S)
+# — 20 minutes already means a cycle was missed, not just noise. 2 hours is
+# long enough that a stalled collector, not a slow cycle, is the honest read.
+_MONITORING_LIVE_THRESHOLD_MINUTES = 20
+_MONITORING_DELAYED_THRESHOLD_MINUTES = 120
+
+# Coverage strip: last 10h, bucketed at the collector's own live cadence (15
+# min) so a single missed cycle shows up as one faint tick, not smoothed away.
+_COVERAGE_WINDOW_HOURS = 10.0
+_COVERAGE_BUCKET_MINUTES = 15
+
 
 async def get_db() -> AsyncIterator[AsyncSession]:
     async with get_session() as session:
@@ -151,6 +164,58 @@ def _current_sim_hours_from_samples(samples_by_post: dict[str, list[Sample]]) ->
     the samples it was actually computed from)."""
     all_hours = [s.sim_hours for samples in samples_by_post.values() for s in samples]
     return max(all_hours, default=None)
+
+
+def _last_sample_captured_at_from_samples(samples_by_post: dict[str, list[Sample]]) -> datetime | None:
+    """Real wall-clock time of the most recently captured sample across
+    every tracked post, read off the already-fetched dataset cache rather
+    than a fresh query. Distinct from _current_sim_hours_from_samples: this
+    answers "is the collector still actually running," which sim_hours
+    can't (CLAUDE.md: sim time isn't wall time)."""
+    all_captured = [s.captured_at for samples in samples_by_post.values() for s in samples]
+    return max((_as_utc(c) for c in all_captured), default=None)
+
+
+def _monitoring_state(minutes_since_last_sample: float | None) -> str:
+    """"live" under ~20min (a live-sampling cycle is 15min, so 20 already
+    means one was missed), "delayed" out to 2h, "interrupted" beyond that —
+    or when nothing has ever been captured, which is the same honest "not
+    currently running" story as a long gap."""
+    if minutes_since_last_sample is None:
+        return "interrupted"
+    if minutes_since_last_sample < _MONITORING_LIVE_THRESHOLD_MINUTES:
+        return "live"
+    if minutes_since_last_sample < _MONITORING_DELAYED_THRESHOLD_MINUTES:
+        return "delayed"
+    return "interrupted"
+
+
+def _sampling_coverage_from_samples(samples_by_post: dict[str, list[Sample]]) -> list[SamplingCoverageTick]:
+    """Buckets every sample's real captured_at into fixed-width wall-clock
+    windows over the last _COVERAGE_WINDOW_HOURS — a solid tick means at
+    least one sample (any post, cache or live) landed in that window. Reads
+    off the already-fetched dataset cache, no new query."""
+    now = _as_utc(datetime.now(UTC))
+    bucket_delta = timedelta(minutes=_COVERAGE_BUCKET_MINUTES)
+    bucket_count = int(_COVERAGE_WINDOW_HOURS * 60 / _COVERAGE_BUCKET_MINUTES)
+    window_start = now - bucket_delta * bucket_count
+
+    covered_buckets: set[int] = set()
+    for samples in samples_by_post.values():
+        for sample in samples:
+            captured = _as_utc(sample.captured_at)
+            if captured < window_start or captured > now:
+                continue
+            index = min(int((captured - window_start) / bucket_delta), bucket_count - 1)
+            covered_buckets.add(index)
+
+    return [
+        SamplingCoverageTick(
+            interval_start=_iso_timestamp(window_start + bucket_delta * i),
+            has_sample=i in covered_buckets,
+        )
+        for i in range(bucket_count)
+    ]
 
 
 async def _samples_by_post(session: AsyncSession, post_ids: list[str]) -> dict[str, list[Sample]]:
@@ -709,12 +774,26 @@ async def get_status(session: AsyncSession = Depends(get_db)) -> SystemStatus:
         await session.execute(select(func.count()).select_from(Alert).where(Alert.submitted.is_(True)))
     ).scalar_one()
 
+    last_sample_captured_at = _last_sample_captured_at_from_samples(samples_by_post)
+    minutes_since_last_sample = (
+        (_as_utc(datetime.now(UTC)) - last_sample_captured_at).total_seconds() / 60
+        if last_sample_captured_at is not None
+        else None
+    )
+
     return SystemStatus(
         posts_tracked=len(posts),
         last_checked_sim_hours=_current_sim_hours_from_samples(samples_by_post),
         most_notable_post=most_notable_post,
         most_recent_alert=most_recent_alert,
         alerts_sent=alerts_sent,
+        creators_tracked=len(creators),
+        last_sample_captured_at=_iso_timestamp(last_sample_captured_at)
+        if last_sample_captured_at is not None
+        else None,
+        minutes_since_last_sample=minutes_since_last_sample,
+        monitoring_state=_monitoring_state(minutes_since_last_sample),
+        sampling_coverage=_sampling_coverage_from_samples(samples_by_post),
     )
 
 

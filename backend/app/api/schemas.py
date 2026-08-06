@@ -192,15 +192,37 @@ class AlertSummary(BaseModel):
     sim_hours: float
 
 
+class SamplingCoverageTick(BaseModel):
+    """One bucket of the /status page's coverage strip: did any sample land
+    in this real wall-clock window, regardless of which post it was for."""
+
+    interval_start: str  # ISO wall-clock timestamp, start of this bucket
+    has_sample: bool
+
+
 class SystemStatus(BaseModel):
     """Backs the right-hand panel's idle state — real system context
-    instead of a placeholder, when no post is selected."""
+    instead of a placeholder, when no post is selected — and the nav
+    indicator / dedicated /status page's liveness reading."""
 
     posts_tracked: int
     last_checked_sim_hours: float | None
     most_notable_post: NotablePost | None  # most recently-updated Taking off / Worth watching post
     most_recent_alert: AlertSummary | None
     alerts_sent: int  # total posts with a submitted alert, from the alerts table
+    creators_tracked: int
+
+    # --- Wall-clock liveness, distinct from the sim-time fields above: "is
+    # the collector actually still running right now," which sim_hours
+    # alone can't answer (CLAUDE.md: all sim timestamps are on a
+    # simulation clock, never wall time). ---
+    last_sample_captured_at: str | None  # real ISO timestamp, max(Sample.captured_at)
+    minutes_since_last_sample: float | None  # None only when no sample has ever been captured
+    monitoring_state: Literal["live", "delayed", "interrupted"]
+    # Last ~10h of wall-clock sampling coverage, oldest first — for the
+    # /status page's compact strip. Bucketed from the same samples already
+    # loaded for this response, not a new query.
+    sampling_coverage: list[SamplingCoverageTick]
 
 
 class BreakoutLogEntry(BaseModel):

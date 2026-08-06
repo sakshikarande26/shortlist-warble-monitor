@@ -175,12 +175,27 @@ export interface AlertSummary {
   sim_hours: number;
 }
 
+export type MonitoringState = "live" | "delayed" | "interrupted";
+
+export interface SamplingCoverageTick {
+  interval_start: string;
+  has_sample: boolean;
+}
+
 export interface SystemStatus {
   posts_tracked: number;
   last_checked_sim_hours: number | null;
   most_notable_post: NotablePost | null;
   most_recent_alert: AlertSummary | null;
   alerts_sent: number;
+  creators_tracked: number;
+  // Wall-clock liveness — distinct from last_checked_sim_hours above, which
+  // is on the simulation clock. This is "is the collector actually still
+  // running right now," in real time.
+  last_sample_captured_at: string | null;
+  minutes_since_last_sample: number | null;
+  monitoring_state: MonitoringState;
+  sampling_coverage: SamplingCoverageTick[];
 }
 
 export interface BreakoutLogEntry {

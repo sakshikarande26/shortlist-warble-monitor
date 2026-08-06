@@ -1,5 +1,9 @@
-import { NavLink } from "react-router-dom";
+import { Link, NavLink } from "react-router-dom";
 import { AgentIcon, BreakoutsIcon, CreatorsIcon, HomeIcon, ScoreboardIcon } from "./NavIcons";
+import { getStatus } from "../../lib/api";
+import { useCachedResource } from "../../lib/dataCache";
+import { monitoringStateLabel } from "../../lib/copy";
+import type { MonitoringState, SystemStatus } from "../../lib/types";
 
 const NAV_ITEMS = [
   { label: "Home", to: "/", Icon: HomeIcon },
@@ -7,6 +11,42 @@ const NAV_ITEMS = [
   { label: "Creator portfolio", to: "/creators", Icon: CreatorsIcon },
   { label: "Breakouts", to: "/breakouts", Icon: BreakoutsIcon },
 ];
+
+const MONITOR_DOT_CLASS: Record<MonitoringState, string> = {
+  live: "bg-monitor-live",
+  delayed: "bg-monitor-delayed",
+  interrupted: "bg-monitor-interrupted",
+};
+
+// Real liveness, not a static placeholder: shares the "status" cache key (and
+// its ~60s poll cadence) with every other consumer of getStatus() via
+// useCachedResource, so this never fires its own extra request. Color, not
+// just dot fill, carries the signal here — deliberately: "interrupted" needs
+// to read as unmistakably wrong at a glance, not just a differently-filled
+// dot next to otherwise-identical grey text. Whole row links to /status.
+function MonitoringIndicator() {
+  const { state } = useCachedResource<SystemStatus>("status", getStatus, "Couldn't load status");
+  const monitoringState = state.status === "ready" ? state.data.monitoring_state : null;
+
+  const label = monitoringState ? monitoringStateLabel(monitoringState) : "Checking monitoring status…";
+  const dotClass = monitoringState ? MONITOR_DOT_CLASS[monitoringState] : "bg-ink-muted/40";
+
+  return (
+    <Link
+      to="/status"
+      title={label}
+      className="mt-2 flex items-center gap-2 text-xs text-ink-muted transition-colors hover:text-ink"
+    >
+      <span className="relative flex h-2 w-2 shrink-0">
+        {monitoringState === "live" && (
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-monitor-live opacity-60" />
+        )}
+        <span className={`relative inline-flex h-2 w-2 rounded-full ${dotClass}`} />
+      </span>
+      <span className="truncate">{label}</span>
+    </Link>
+  );
+}
 
 // Slim, calm sidebar — a hairline divider carries the separation from the
 // center column, not a heavy panel treatment. The marketing agent chat's
@@ -32,6 +72,7 @@ export function Nav({
     <nav className="flex w-[220px] shrink-0 flex-col border-r border-line px-6 py-10">
       <div className="mb-10">
         <p className="text-[19px] font-bold tracking-tight text-ink">LongSheet</p>
+        <MonitoringIndicator />
       </div>
 
       <div className="flex flex-col gap-1">
@@ -67,14 +108,6 @@ export function Nav({
           <AgentIcon className="shrink-0" />
           Marketing agent
         </button>
-      </div>
-
-      <div className="mt-auto border-t border-line pt-4">
-        <div className="flex items-center gap-2">
-          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
-          <span className="text-sm text-ink">Warble active</span>
-        </div>
-
       </div>
     </nav>
   );

@@ -10,7 +10,7 @@
 // use the same value), and a second frontend-side mapping is exactly how a
 // section header and a card's own badge end up disagreeing.
 
-import type { EvidenceDetail, HomePost, PostDetail } from "./types";
+import type { EvidenceDetail, HomePost, MonitoringState, PostDetail } from "./types";
 
 /** One meaningful, honest statement per card, grounded in this post's own
  * evidence numbers — how much it gained, over what window, and how that
@@ -206,6 +206,55 @@ const STALE_THRESHOLD_HOURS = 6;
 export function isStale(latestSimHours: number | null, currentSimHours: number | null): boolean {
   if (latestSimHours === null || currentSimHours === null) return false;
   return currentSimHours - latestSimHours >= STALE_THRESHOLD_HOURS;
+}
+
+/** Plain-language read of monitoring_state — the nav indicator's label and
+ * the /status page's headline share this exact wording so the two never
+ * disagree about what "live"/"delayed"/"interrupted" means. */
+export function monitoringStateLabel(state: MonitoringState): string {
+  switch (state) {
+    case "live":
+      return "Monitoring live";
+    case "delayed":
+      return "Data may be a few minutes behind";
+    case "interrupted":
+      return "Monitoring may be interrupted — check back soon";
+  }
+}
+
+/** One sentence of extra context for the /status page, below the headline
+ * label above — grounded in the same three states, never a separate claim. */
+export function monitoringStateDetail(state: MonitoringState): string {
+  switch (state) {
+    case "live":
+      return "Samples are arriving on schedule.";
+    case "delayed":
+      return "The last sampling cycle should have landed by now, but the wait isn't long enough yet to call it stopped.";
+    case "interrupted":
+      return "It's been long enough since the last sample that a cycle was likely missed.";
+  }
+}
+
+/** "3 minutes ago" / "2 hours 10 minutes ago" — real wall-clock elapsed
+ * time since the last captured sample, distinct from formatRelativeSimTime
+ * above (which is phrased relative to sim_hours, not Date.now()). Used only
+ * for wall-clock liveness (SystemStatus.minutes_since_last_sample), never
+ * for post/creator data timestamps (CLAUDE.md: those stay on sim time). */
+export function formatWallClockAgo(minutes: number | null): string {
+  if (minutes === null) return "No samples recorded yet";
+  if (minutes < 1) return "moments ago";
+  if (minutes < 60) {
+    const whole = Math.round(minutes);
+    return `${whole} minute${whole === 1 ? "" : "s"} ago`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const remainder = Math.round(minutes % 60);
+  if (hours < 24) {
+    if (remainder === 0) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+    return `${hours} hour${hours === 1 ? "" : "s"} ${remainder} minute${remainder === 1 ? "" : "s"} ago`;
+  }
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
 }
 
 /** "Tue 7 Jul 2026, 3:42 AM" from a reading's real timestamp. Uses the
