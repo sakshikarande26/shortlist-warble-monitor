@@ -120,9 +120,10 @@ uv run alembic upgrade head
 uv run python -m app.collector.loop
 ```
 
-**Deployed:** [https://shortlist-warble-monitor-production.up.railway.app/](https://shortlist-warble-monitor-production.up.railway.app/)
+**Deployed:** [Open Project](https://shortlist-warble-monitor-production.up.railway.app/)
 
-**Walkthrough** [https://hilarious-taxi-8db.notion.site/Product-Decisions-Experiments-Shortlist-s-Take-home-3b3658fa60068062bbc9db533037efda?source=copy_link]
+**Walkthrough:** [Notion](https://hilarious-taxi-8db.notion.site/Product-Decisions-Experiments-Shortlist-s-Take-home-3b3658fa60068062bbc9db533037efda?source=copy_link)
+
 ---
 
 ## What "starting to move" means
