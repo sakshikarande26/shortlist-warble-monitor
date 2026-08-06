@@ -147,7 +147,8 @@ vite.config.ts.timestamp-*
 .vite/
 
 /docs/WORKFLOW.md
-/docs/FINAL_REVIEW.md
+docs/FINAL_REVIEW.md
+
 
 .claude/
 
