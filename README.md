@@ -2,8 +2,6 @@
 
 **Content breakout detection for brand-creator programs on social media**
 
-(Built for the Shortlist AI Product Engineering) 
-
 ---
 
 **Deployed:** [Open Project](https://shortlist-warble-monitor-production.up.railway.app/)
