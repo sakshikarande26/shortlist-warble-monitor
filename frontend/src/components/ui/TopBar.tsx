@@ -4,7 +4,7 @@ import { getStatus } from "../../lib/api";
 import { invalidateCache, useCachedResource } from "../../lib/dataCache";
 import { monitoringStateLabel } from "../../lib/copy";
 import type { MonitoringState, SystemStatus } from "../../lib/types";
-import { RefreshIcon } from "./NavIcons";
+import { MenuIcon, RefreshIcon } from "./NavIcons";
 
 const TICK_MS = 30_000; // coarse — this is a UI-freshness hint, not a stopwatch
 
@@ -57,7 +57,7 @@ function SystemHealthIndicator() {
 // Full-width glass bar above the nav+main and agent cards — same visual
 // language (rounded-3xl border bg-board shadow backdrop-blur) as the cards
 // below it, just spanning both.
-export function TopBar() {
+export function TopBar({ onToggleNav }: { onToggleNav: () => void }) {
   // Real wall-clock time of the last successful fetch (not sim time) —
   // "how long ago did this browser last talk to the server," a UI
   // freshness claim distinct from CLAUDE.md's sim-clock-only rule for
@@ -80,14 +80,29 @@ export function TopBar() {
   }, []);
 
   return (
-    <div className="relative flex shrink-0 items-center justify-between rounded-3xl border border-line bg-board px-6 py-3 shadow-[0_20px_60px_rgb(0_0_0_/_10%)] backdrop-blur-[24px] sm:px-8">
-      <SystemHealthIndicator />
-      <p className="pointer-events-none absolute left-1/2 -translate-x-1/2 text-center text-sm font-bold text-ink sm:text-base">
+    // A flex row of three sections (rather than the title absolutely
+    // centered over static siblings) so the title truncates instead of
+    // overlapping the hamburger/health pill or the refresh button once the
+    // bar gets narrower than all four can comfortably fit — the failure
+    // mode on a phone with the old absolute-positioned version.
+    <div className="relative flex shrink-0 items-center gap-3 rounded-3xl border border-line bg-board px-4 py-3 shadow-[0_20px_60px_rgb(0_0_0_/_10%)] backdrop-blur-[24px] sm:px-8">
+      <div className="flex shrink-0 items-center gap-3">
+        <button
+          type="button"
+          onClick={onToggleNav}
+          aria-label="Open menu"
+          className="rounded-lg p-1.5 text-ink-muted hover:bg-black/[0.05] hover:text-ink lg:hidden"
+        >
+          <MenuIcon />
+        </button>
+        <SystemHealthIndicator />
+      </div>
+      <p className="min-w-0 flex-1 truncate text-center text-sm font-bold text-ink sm:text-base">
         Shortlist Brand Performance Monitor
       </p>
-      <div className="ml-auto flex items-center gap-3">
+      <div className="flex shrink-0 items-center gap-3">
         {lastFetchedAt && (
-          <span className="text-xs text-ink-muted">
+          <span className="hidden text-xs text-ink-muted sm:inline">
             Last updated {formatMinutesAgo(lastFetchedAt)}
           </span>
         )}
@@ -101,10 +116,11 @@ export function TopBar() {
             refresh();
             window.location.reload();
           }}
-          className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium text-ink-muted transition-colors hover:bg-black/[0.05] hover:text-ink"
+          aria-label="Refresh"
+          className="flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-xs font-medium text-ink-muted transition-colors hover:bg-black/[0.05] hover:text-ink sm:px-3"
         >
           <RefreshIcon className="shrink-0" />
-          Refresh
+          <span className="hidden sm:inline">Refresh</span>
         </button>
       </div>
     </div>

@@ -73,3 +73,21 @@ export function RefreshIcon({ className }: IconProps) {
     </svg>
   );
 }
+
+// Mobile-only nav toggle (below the lg breakpoint) — opens/closes the
+// sidebar drawer in AppShell/Nav.
+export function MenuIcon({ className }: IconProps) {
+  return (
+    <svg {...BASE} className={className} aria-hidden="true">
+      <path d="M4 7h16M4 12h16M4 17h16" {...STROKE} />
+    </svg>
+  );
+}
+
+export function CloseIcon({ className }: IconProps) {
+  return (
+    <svg {...BASE} className={className} aria-hidden="true">
+      <path d="M6 6l12 12M18 6L6 18" {...STROKE} />
+    </svg>
+  );
+}

@@ -9,6 +9,7 @@
 **Walkthrough:** [Notion](https://shortlist-assessment.notion.site/Product-Decisions-Experiments-Shortlist-s-Take-home-3b3658fa60068062bbc9db533037efda?pvs=73)
 
 ---
+
 ## What this is
 
 LongSheet runs a ~40-creator program on Warble. View counts move in real
@@ -22,6 +23,8 @@ The hard part was never "poll an API on a timer." It's deciding, from
 sparse samples, what's signal, and being able to defend that call later.
 
 ---
+
+
 
 ## Non-functional requirements
 
@@ -40,6 +43,8 @@ the call are logged.
 
 ---
 
+
+
 ## Architecture
 
 ```
@@ -57,6 +62,8 @@ Collector  →  Supabase  →  Detector  →  Alerter  →  Read API + Frontend 
 
 
 ---
+
+
 
 ## Repo map
 
@@ -89,6 +96,8 @@ docs/                      # product spec, UX principles, decision log, verifica
 ```
 
 ---
+
+
 
 ## Running it
 
@@ -123,8 +132,9 @@ uv run alembic upgrade head
 uv run python -m app.collector.loop
 ```
 
-
 ---
+
+
 
 ## What "starting to move" means
 
@@ -173,6 +183,8 @@ about.
 
 ---
 
+
+
 ## What I optimized for
 
 - Getting detection right, over shipping fast
@@ -180,25 +192,31 @@ about.
 only explains, every AI claim traces to a real number or gets thrown out
 - One tight product slice over a broad platform
 
+
+
 ## Scope
 
 Four screens, each answering one marketer question, nothing more:
 
 - **Home** — what changed, what needs attention now
 - **Posts** — the complete tracked set, for when you want to browse
-  rather than be told
+rather than be told
 - **Creators** — who's in the program and who's performing
 - **Breakouts** — the full history of what's taken off, and whether
-  it was alerted live
+it was alerted live
+
+
 
 ## What I skipped intentionally
 
 - Any comparison/reporting surface beyond what's on Post detail — not
-  what someone checking twice a day needs first
+what someone checking twice a day needs first
 - Campaign management, budgets, contracts, ROAS — Warble doesn't
-  provide this data, so building it would mean fabricating
+provide this data, so building it would mean fabricating
 
 ---
+
+
 
 ## What marketers need vs. what this gives them
 
@@ -209,6 +227,8 @@ act on this" in order: status → real growth chart → why it matters →
 a suggested next step, framed as a consideration, never an instruction.
 
 ---
+
+
 
 ## The marketing agent
 
@@ -227,11 +247,15 @@ answers and judging usefulness, not just accuracy.
 
 ---
 
+
+
 ## How Claude and Cursor helped
 
 Built with Claude Code inside Cursor. AI wrote most of the code; I directed every scope decision, reviewed every diff and did the data investigation myself, replaying the detector against real stored history before asking Claude Code to implement each fix.
 
 ---
+
+
 
 ## What I'd watch out for at scale
 
@@ -246,11 +270,15 @@ Built with Claude Code inside Cursor. AI wrote most of the code; I directed ever
 
 ---
 
+
+
 ## What I learned
 
 A detector that passes its own tests can still be silently wrong; the only fix is checking it against real data by hand. I'm also more convinced the deterministic/AI split is the right shape here: AI is more useful and safer for explaining a decision than making one.
 
 ---
+
+
 
 ## Known limitations
 
@@ -259,6 +287,9 @@ history, so performance and alert timing during that period are
 incomplete.
 - Some historical breakouts were identified through replay after they
 occurred, so their original alert latency cannot be recovered.
+- A post's baseline pace is set from its first two readings and never
+  updates, an unusually fast or slow start can skew how that post
+  compares to itself later on.
 - API activity is logged, but automated collector-liveness alerts are not
 yet implemented.
 - Marketing Agent conversations reset when the service restarts.
