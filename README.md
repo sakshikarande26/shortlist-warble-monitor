@@ -122,7 +122,7 @@ uv run python -m app.collector.loop
 
 **Deployed:** [https://shortlist-warble-monitor-production.up.railway.app/](https://shortlist-warble-monitor-production.up.railway.app/)
 
-[Product Decisions & Experiments (Notion)](https://hilarious-taxi-8db.notion.site/Product-Decisions-Experiments-Shortlist-s-Take-home-3b3658fa60068062bbc9db533037efda)
+**Walkthrough** [https://hilarious-taxi-8db.notion.site/Product-Decisions-Experiments-Shortlist-s-Take-home-3b3658fa60068062bbc9db533037efda?source=copy_link]
 ---
 
 ## What "starting to move" means
