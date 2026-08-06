@@ -180,11 +180,23 @@ about.
 only explains, every AI claim traces to a real number or gets thrown out
 - One tight product slice over a broad platform
 
+## Scope
+
+Four screens, each answering one marketer question, nothing more:
+
+- **Home** — what changed, what needs attention now
+- **Posts** — the complete tracked set, for when you want to browse
+  rather than be told
+- **Creators** — who's in the program and who's performing
+- **Breakouts** — the full history of what's taken off, and whether
+  it was alerted live
+
 ## What I skipped intentionally
 
-- A full posts/creators browsing app: kept to home, post detail, creators and breakout history
-- Any comparison/reporting surface: not what someone checking twice a
-day needs first
+- Any comparison/reporting surface beyond what's on Post detail — not
+  what someone checking twice a day needs first
+- Campaign management, budgets, contracts, ROAS — Warble doesn't
+  provide this data, so building it would mean fabricating
 
 ---
 
