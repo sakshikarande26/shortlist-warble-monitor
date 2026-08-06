@@ -1,9 +1,58 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { getStatus } from "../../lib/api";
-import { invalidateCache } from "../../lib/dataCache";
+import { invalidateCache, useCachedResource } from "../../lib/dataCache";
+import { monitoringStateLabel } from "../../lib/copy";
+import type { MonitoringState, SystemStatus } from "../../lib/types";
 import { RefreshIcon } from "./NavIcons";
 
 const TICK_MS = 30_000; // coarse — this is a UI-freshness hint, not a stopwatch
+
+// Pastel/soft per state, not the saturated dot color — a light, quiet badge
+// that still shifts hue when something's actually wrong, rather than a loud
+// traffic light sitting in the header at all times.
+const HEALTH_PILL_CLASS: Record<MonitoringState, string> = {
+  live: "bg-monitor-live-soft text-monitor-live",
+  delayed: "bg-monitor-delayed-soft text-monitor-delayed",
+  interrupted: "bg-monitor-interrupted-soft text-monitor-interrupted",
+};
+
+const HEALTH_DOT_CLASS: Record<MonitoringState, string> = {
+  live: "bg-monitor-live",
+  delayed: "bg-monitor-delayed",
+  interrupted: "bg-monitor-interrupted",
+};
+
+// Real liveness, not a static placeholder: shares the "status" cache key
+// (and its ~60s poll cadence) with the /status page via useCachedResource,
+// so this never fires its own extra request. Label always reads "System
+// health" — the actual state ("Monitoring live" / "delayed" / "interrupted")
+// is the hover tooltip, same pattern as StatusPill's fixed labels. The pill
+// links to /status for the full picture.
+function SystemHealthIndicator() {
+  const { state } = useCachedResource<SystemStatus>("status", getStatus, "Couldn't load status");
+  const monitoringState = state.status === "ready" ? state.data.monitoring_state : null;
+
+  const pillClass = monitoringState ? HEALTH_PILL_CLASS[monitoringState] : "bg-black/[0.04] text-ink-muted";
+  const dotClass = monitoringState ? HEALTH_DOT_CLASS[monitoringState] : "bg-ink-muted/40";
+  const title = monitoringState ? monitoringStateLabel(monitoringState) : "Checking monitoring status…";
+
+  return (
+    <Link
+      to="/status"
+      title={title}
+      className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium tracking-wide transition-opacity hover:opacity-80 ${pillClass}`}
+    >
+      <span className="relative flex h-1.5 w-1.5 shrink-0">
+        {monitoringState === "live" && (
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-monitor-live opacity-60" />
+        )}
+        <span className={`relative inline-flex h-1.5 w-1.5 rounded-full ${dotClass}`} />
+      </span>
+      System health
+    </Link>
+  );
+}
 
 // Full-width glass bar above the nav+main and agent cards — same visual
 // language (rounded-3xl border bg-board shadow backdrop-blur) as the cards
@@ -32,6 +81,7 @@ export function TopBar() {
 
   return (
     <div className="relative flex shrink-0 items-center justify-between rounded-3xl border border-line bg-board px-6 py-3 shadow-[0_20px_60px_rgb(0_0_0_/_10%)] backdrop-blur-[24px] sm:px-8">
+      <SystemHealthIndicator />
       <p className="pointer-events-none absolute left-1/2 -translate-x-1/2 text-center text-sm font-bold text-ink sm:text-base">
         Shortlist Brand Performance Monitor
       </p>
