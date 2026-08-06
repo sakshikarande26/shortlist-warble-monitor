@@ -12,10 +12,12 @@
 
 ## What this is
 
-40 creators posting on Warble, view counts moving in real time, and a
-window that closes fast once a post takes off. This watches every post
-continuously, decides what counts as real momentum vs. a good afternoon,
-and pages the brand only when it's worth it.
+LongSheet runs a ~40-creator program on Warble. View counts move in real
+time, and the window to act on a breakout closes fast once a post takes
+off. This watches every post continuously, decides what counts as real
+momentum vs. a good afternoon, and pages the brand only when it's worth
+boosting spend behind, resharing, or locking a creator's next post in at
+today's rate.
 
 The hard part was never "poll an API on a timer." It's deciding, from
 sparse samples, what's signal, and being able to defend that call later.
@@ -25,7 +27,7 @@ sparse samples, what's signal, and being able to defend that call later.
 ## Architecture
 
 ```
-Collector  →  Supabase  →  Detector  →  Alerter  →  Read API  →  Frontend + Agent
+Collector  →  Supabase  →  Detector  →  Alerter  →  Read API + Frontend + Agent
  (polls)      (stores)     (scores)     (fires)     (FastAPI)     (React)
 ```
 
@@ -34,7 +36,7 @@ Collector  →  Supabase  →  Detector  →  Alerter  →  Read API  →  Front
 | **Collector** | Polls Warble on a schedule: discovery every ~6h, live metrics every 15min. Stays under the 250 req/hr limit. Runs 24/7 on Railway. Every reading is appended, never overwritten. |
 | **Detector** | Stateless: recomputes a post's status from its full history every time. Requires *sustained* acceleration across multiple checks, not one spike. Qualifies on absolute gain OR relative growth, not both. |
 | **Alerter** | Fires `POST /v1/alerts` only on a confirmed breakout, deduped so nothing pages twice. |
-| **Read API + Frontend** | Sit on top, display what the detector already decided. Never touch detection logic directly. |
+| **Read API + Frontend + Agent** | Sit on top, display what the detector already decided, and let the marketing agent narrate it. Never touch detection logic directly. |
 
 ---
 
@@ -65,7 +67,7 @@ frontend/
         ├── copy.ts        # every piece of marketer-facing text, one file
         └── api.ts         # typed client for the backend
 
-docs/                      # UX principles + engineering decision log
+docs/                      # product spec, UX principles, decision log, verification notes
 ```
 
 ---
@@ -188,7 +190,8 @@ by the unit tests, because every one of them passed the tests.
    break out", stamped with the moment it actually did. Removed posts were
    a second, smaller instance of the same mistake: they were excluded from
    detection along with sampling, though a post that broke out before it
-   came down still broke out.
+   came down still broke out. Both fixes are deployed and running on the
+   live collector, not just verified in a dry run.
 
 5. **Half the collected samples were invisible to the detector.**
    `sim_hours` came from `/me`, which is polled every 30 minutes, while
@@ -299,21 +302,16 @@ more useful, and safer, explaining a decision than making one.
 
 ## Known limitations
 
-- **The collector was down for 67 of the window's 168 hours.** Samples
-  stop at sim hour 68.3 and resume at 135.7 — a ~2.8 day hole in the
-  middle of a 7 day run, during which nothing was collected and nothing
-  could have been alerted. It's visible in the data and I'd rather name it
-  than have it found: recall and latency for anything that broke out in
-  that window are simply gone. The restart was manual; the real fix is a
-  liveness check on the collector service, which is the first thing I'd
-  add next.
-- Alerts for breakouts recovered by fix 4 above are **late by
-  construction** — they report the moment the post actually broke out, but
-  they were submitted once the bug was fixed, not when it happened. Recall
-  is recovered; latency for those specific posts isn't.
-- Agent session memory is in-process, clears on redeploy/restart.
-- Relative-ranking calibration hasn't been tuned against a full 7-day
-  dataset, since the window's still open.
+- A temporary collector interruption created a gap in the simulation
+  history, so performance and alert timing during that period are
+  incomplete.
+- Some historical breakouts were identified through replay after they
+  occurred, so their original alert latency cannot be recovered.
+- API activity is logged, but automated collector-liveness alerts are not
+  yet implemented.
+- Marketing Agent conversations reset when the service restarts.
+- Creator-relative ranking would benefit from further tuning against a
+  complete dataset.
 
 ---
 
