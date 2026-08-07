@@ -30,6 +30,9 @@ export function performanceStatement(
   if (post.status_label === "Steady") {
     return "No unusual movement. Performing about as expected.";
   }
+  if (post.status_label === "Declining") {
+    return `${describeGain(evidence)}. Views are trending down instead of up.`;
+  }
 
   return `${describeGain(evidence)}. ${describeComparativePace(evidence)}`;
 }
@@ -46,6 +49,8 @@ export function statusSummary(detail: Pick<PostDetail, "status_label" | "is_gone
       return "Taking off. Sustained growth across several checks in a row.";
     case "Worth watching":
       return "Worth watching. Growing faster than what's typical for this creator right now.";
+    case "Declining":
+      return "Declining. Views have dropped over the latest checks.";
     case "Steady":
     default:
       return "Steady. No unusual movement to report.";
@@ -66,19 +71,29 @@ export function explainEvidence(detail: Pick<PostDetail, "status_label" | "is_go
   if (detail.status_label === "Steady") {
     return "No unusual growth has shown up yet. The latest check was in line with a normal, steady pace.";
   }
+  if (detail.status_label === "Declining") {
+    return `${describeGain(evidence)}. This post's views have been falling instead of growing.`;
+  }
 
   const streak = describeStreak(evidence.consecutive_qualifying_checks);
   return `${describeGain(evidence)}. ${describeComparativePace(evidence)}${streak}`;
 }
 
-/** "+3,420 views in 2h" — the gain from the latest check and, when it's
- * known, the real time window it happened over. Never derives the window
- * by dividing gain by velocity (that would itself divide by zero on a
- * flat interval) — it's read directly off the underlying sample
- * timestamps on the backend. */
+/** "+3,420" for a real gain, "-1,240" for a real drop — never clamped to a
+ * fabricated "+0", since a Declining post's whole point is that the number
+ * is negative. toLocaleString() already prints the minus sign, so the only
+ * job here is choosing whether to prepend a "+". */
+function formatSignedGain(gain: number): string {
+  return gain >= 0 ? `+${gain.toLocaleString()}` : gain.toLocaleString();
+}
+
+/** "+3,420 views in 2h" (or "-1,240 views in 2h" for a decline) — the
+ * change from the latest check and, when it's known, the real time window
+ * it happened over. Never derives the window by dividing gain by velocity
+ * (that would itself divide by zero on a flat interval) — it's read
+ * directly off the underlying sample timestamps on the backend. */
 function describeGain(evidence: EvidenceDetail): string {
-  const gain = Math.max(evidence.absolute_gain, 0);
-  const gainText = `+${gain.toLocaleString()} views`;
+  const gainText = `${formatSignedGain(evidence.absolute_gain)} views`;
   if (evidence.window_hours === null) return gainText;
   return `${gainText} in ${formatWindow(evidence.window_hours)}`;
 }
@@ -380,11 +395,11 @@ type EvidenceChipSource = Pick<
 export function evidenceChips(evidence: EvidenceChipSource | null): string[] {
   if (!evidence) return [];
   const chips: string[] = [];
-  const gain = Math.max(evidence.absolute_gain, 0);
+  const gainText = formatSignedGain(evidence.absolute_gain);
   chips.push(
     evidence.window_hours !== null
-      ? `+${gain.toLocaleString()} in ${formatWindow(evidence.window_hours)}`
-      : `+${gain.toLocaleString()} views`,
+      ? `${gainText} in ${formatWindow(evidence.window_hours)}`
+      : `${gainText} views`,
   );
   if (evidence.creator_pace_ratio !== null) {
     chips.push(`${evidence.creator_pace_ratio.toFixed(1)}× baseline`);
@@ -400,8 +415,7 @@ export function evidenceChips(evidence: EvidenceChipSource | null): string[] {
  * sentence — same numbers evidenceChips uses, just addressable alone. */
 export function gainColumn(evidence: EvidenceChipSource | null): string | null {
   if (!evidence) return null;
-  const gain = Math.max(evidence.absolute_gain, 0);
-  const gainText = `+${gain.toLocaleString()}`;
+  const gainText = formatSignedGain(evidence.absolute_gain);
   return evidence.window_hours !== null ? `${gainText} in ${formatWindow(evidence.window_hours)}` : gainText;
 }
 

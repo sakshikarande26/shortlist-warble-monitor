@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import llm
 from app.api.routes import (
+    _DECLINING,
     _STEADY,
     _TAKING_OFF,
     _UNAVAILABLE,
@@ -47,7 +48,7 @@ MAX_MOVERS = 5
 MAX_CREATOR_TALLY = 5
 MONITORING_WINDOW_DAYS = 7
 
-CANONICAL_STATUSES = (_TAKING_OFF, _WORTH_WATCHING, _STEADY, _UNAVAILABLE)
+CANONICAL_STATUSES = (_TAKING_OFF, _WORTH_WATCHING, _STEADY, _DECLINING, _UNAVAILABLE)
 
 
 # --- Session memory (in-process, per session_id) -----------------------
@@ -257,8 +258,12 @@ async def build_facts(session: AsyncSession, selected_post_id: str | None) -> di
     breakouts.sort(key=lambda b: b["_sort_sim_hours"], reverse=True)
     breakouts = [{k: v for k, v in b.items() if k != "_sort_sim_hours"} for b in breakouts[:MAX_BREAKOUTS]]
 
+    # "Movers" means outpacing the creator's own norm — growth, not decline —
+    # so a declining post is excluded here same as a steady one; it has no
+    # creator_pace_ratio anyway (that's only computed on rankable positive
+    # movement) and would just sort to the bottom on _pace_sort_key's -inf.
     movers = sorted(
-        (p for p in posts if p.status != "gone" and computations[p.id].status_label != _STEADY),
+        (p for p in posts if p.status != "gone" and computations[p.id].status_label not in (_STEADY, _DECLINING)),
         key=lambda p: _pace_sort_key(computations[p.id].evidence),
         reverse=True,
     )[:MAX_MOVERS]
@@ -393,7 +398,8 @@ def offline_answer(facts: dict[str, Any]) -> str:
         gain = selected.get("recent_gain_views")
         window = selected.get("recent_gain_window_hours")
         if gain is not None and window:
-            parts.append(f"It added {gain:,} views in the last {window:g}h.")
+            verb = "added" if gain >= 0 else "lost"
+            parts.append(f"It {verb} {abs(gain):,} views in the last {window:g}h.")
         multiple = selected.get("baseline_multiple")
         if multiple is not None:
             basis = (

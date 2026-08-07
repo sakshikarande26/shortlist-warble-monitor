@@ -59,6 +59,7 @@ SPARKLINE_POINTS = 12
 _TAKING_OFF = "Taking off"
 _WORTH_WATCHING = "Worth watching"
 _STEADY = "Steady"
+_DECLINING = "Declining"
 _UNAVAILABLE = "Unavailable"
 
 # A post has to meaningfully beat the creator's own norm to count as
@@ -300,6 +301,17 @@ def _is_rankable_movement(latest_signal: IntervalSignal) -> bool:
     )
 
 
+def _is_declining_movement(latest_signal: IntervalSignal) -> bool:
+    """Mirrors _is_rankable_movement in the opposite direction: a real,
+    non-trivial drop in views (not a single-sample correction blip), using
+    the same noise floor so a post isn't badged "Declining" over noise any
+    more readily than it would be badged "Worth watching" over noise."""
+    return (
+        latest_signal.absolute_gain <= -_MIN_RANKABLE_GAIN_VIEWS
+        and latest_signal.relative_growth_pct <= -_MIN_RANKABLE_GROWTH_PCT
+    )
+
+
 def _sane_ratio(value: float) -> float | None:
     """Reject a ratio rather than display it when it can't be trusted:
     NaN/inf (bad arithmetic), zero-or-negative (shouldn't happen for a
@@ -387,17 +399,31 @@ def _pace_sort_key(evidence: EvidenceDetail | None) -> float:
     return evidence.creator_pace_ratio
 
 
-def _unified_status(state: PostState, is_gone: bool, pace_ratio: float | None) -> str:
+def _unified_status(
+    state: PostState, is_gone: bool, pace_ratio: float | None, latest_signal: IntervalSignal | None
+) -> str:
     """The one canonical status shown everywhere — headline, section
     membership, row badge, detail page, right panel. Nothing else computes
     its own opinion of what state a post is in, so nothing can disagree
-    with it."""
+    with it.
+
+    "Declining" is a real, distinct outcome from "Steady": Warble views can
+    go down (a post falling out of the algorithm's favor, a platform
+    correction), and lumping that in with "nothing unusual" was actively
+    misleading — a marketer scanning for flat-grey rows would skim right
+    past a post that's actually losing views. It's checked after the mover
+    threshold (a post can't be both "worth watching" and "declining" at
+    once) and only on real movement past the same noise floor
+    _is_rankable_movement uses, so single-sample noise never earns the red
+    flag either."""
     if is_gone:
         return _UNAVAILABLE
     if state == "BREAKOUT":
         return _TAKING_OFF
     if pace_ratio is not None and pace_ratio >= _MOVER_RATIO_THRESHOLD:
         return _WORTH_WATCHING
+    if latest_signal is not None and _is_declining_movement(latest_signal):
+        return _DECLINING
     return _STEADY
 
 
@@ -484,7 +510,7 @@ def _compute_posts(
                 post_age, latest_signal.velocity, latest_signal.trajectory_ratio, other_points
             )
 
-        status_label = _unified_status(result.state, is_gone, pace_ratio)
+        status_label = _unified_status(result.state, is_gone, pace_ratio, signals[-1] if signals else None)
         evidence = _build_evidence(
             sample_points,
             followers,

@@ -51,7 +51,7 @@ class HomePost(BaseModel):
     state: PostState
     score: float
     reason: str
-    status_label: str  # canonical: "Taking off" / "Worth watching" / "Steady" / "Unavailable"
+    status_label: str  # canonical: "Taking off" / "Worth watching" / "Steady" / "Declining" / "Unavailable"
     evidence: EvidenceDetail | None  # grounds each card's performance line in this post's own numbers
     is_gone: bool
     latest_sim_hours: float | None

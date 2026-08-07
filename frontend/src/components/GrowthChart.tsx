@@ -28,10 +28,12 @@ const NEGATIVE_COLOR = "#c94a3f";
 // The line color echoes the same status color as the badge, so the chart
 // itself reads as "this is what taking off/worth watching looks like,"
 // not just a generic sparkline. Matches index.css's --color-taking-off/
-// --color-watching/--color-unavailable.
+// --color-watching/--color-declining/--color-unavailable. Declining reuses
+// NEGATIVE_COLOR below — same red, same "this is a bad move" meaning.
 const LINE_COLORS: Record<string, string> = {
   "Taking off": "#fc896d",
   "Worth watching": "#2f9e5c",
+  Declining: "#c94a3f",
   Unavailable: "#c94a3f",
 };
 const DEFAULT_LINE_COLOR = "#18181b";

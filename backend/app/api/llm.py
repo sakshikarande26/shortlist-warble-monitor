@@ -250,7 +250,7 @@ _SCALE_SUFFIXES = {"K": 1_000, "M": 1_000_000, "B": 1_000_000_000}
 _SCALE_WORDS = {"thousand": 1_000, "million": 1_000_000, "billion": 1_000_000_000}
 _SCALE_WORD_RE = re.compile(r"\s+(thousand|million|billion)$", re.IGNORECASE)
 
-CANONICAL_STATUSES = ("Taking off", "Worth watching", "Steady", "Unavailable")
+CANONICAL_STATUSES = ("Taking off", "Worth watching", "Steady", "Declining", "Unavailable")
 
 
 def _allowed_numbers(facts: Any, into: set[str]) -> set[str]:

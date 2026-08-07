@@ -38,6 +38,12 @@
      state a post can be in. */
   --color-unavailable: #c94a3f;
   --color-unavailable-soft: #fbeae8;
+  /* Declining: still live, but views are genuinely dropping — the same
+     signed-metric red as Unavailable (it's the app's one "negative move"
+     hue), kept as its own token because the two mean different things: a
+     declining post is still being tracked, an unavailable one is gone. */
+  --color-declining: #c94a3f;
+  --color-declining-soft: #fbeae8;
 
   /* The breakout spotlight card's gradient — the one card allowed a tint,
      coral-family to echo "Taking off." Nothing else pulls from this. */
