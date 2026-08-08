@@ -367,6 +367,57 @@ async def test_creator_pace_ratio_never_fabricated_on_degenerate_baseline():
 
 
 @pytest.mark.asyncio
+async def test_single_dropped_reading_is_not_sold_as_a_decline():
+    """Reproduces the live-data shape that made a single-interval decline
+    rule unsafe: Warble intermittently serves a stale/replica read, so a
+    post's views dip for exactly one check and recover to the *same* value
+    next check — [772159, 771921, 772159, ...] and [809, 500, 821, ...] both
+    appear verbatim in production. 27 of 219 tracked posts showed one.
+
+    A dip that recovers is a bad read, not lost views, and must never be
+    badged "Declining" — same principle as the detector's own refusal to
+    alert on a single outlier interval (states.py).
+    """
+    await _seed_creator()
+    await _seed_post("wp_blip")
+    # Big enough to clear the noise floor on its own (-309 views, -38%),
+    # then fully recovered — exactly @byjunen's real history.
+    await _insert_samples(
+        "wp_blip",
+        [(0.0, 809), (1.0, 500), (2.0, 821), (3.0, 840), (4.0, 849), (5.0, 858)],
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        detail = (await client.get("/api/posts/wp_blip")).json()
+
+    assert detail["status_label"] != "Declining", (
+        "a recovering one-reading dip must not be badged as a decline"
+    )
+
+
+@pytest.mark.asyncio
+async def test_sustained_decline_is_badged_declining():
+    """The other half of the guarantee: a decline that actually HOLDS across
+    consecutive checks is a real, distinct outcome from "Steady" and must be
+    surfaced as such — a marketer scanning for flat grey rows should never
+    have to open a post to discover it's been losing views."""
+    await _seed_creator()
+    await _seed_post("wp_falling")
+    # Every recent interval loses a non-trivial number of views.
+    await _insert_samples(
+        "wp_falling",
+        [(0.0, 5000), (1.0, 6000), (2.0, 5500), (3.0, 4800), (4.0, 4100), (5.0, 3400)],
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        detail = (await client.get("/api/posts/wp_falling")).json()
+
+    assert detail["status_label"] == "Declining"
+    # And the real negative number is reported, never clamped to a fake "+0".
+    assert detail["evidence"]["absolute_gain"] < 0
+
+
+@pytest.mark.asyncio
 async def test_trivial_gain_is_never_sold_as_momentum():
     """Reproduces a real bug found against live production data: post
     wp_a0c3161228 gained FOUR views in half an hour, and came back labelled
@@ -497,6 +548,25 @@ async def test_status_endpoint_reports_alerts_sent_count():
     assert response.status_code == 200
     # Only the submitted alert counts — the non-submitted one is excluded.
     assert response.json()["alerts_sent"] == 1
+
+
+@pytest.mark.asyncio
+async def test_status_endpoint_reports_complete_when_sim_window_ended():
+    """Past the 7-day (168 sim-hour) assessment window, a stale last-sample
+    reading is expected, not an incident — monitoring_state must read
+    "complete" instead of falling through to the wall-clock freshness check
+    that would otherwise badge it "interrupted"."""
+    await _seed_creator()
+    await _seed_post("wp_status_complete")
+    await _insert_samples("wp_status_complete", [(0.0, 2000), (167.5, 50000)])
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/api/status")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["monitoring_state"] == "complete"
+    assert body["last_checked_sim_hours"] == 167.5
 
 
 @pytest.mark.asyncio

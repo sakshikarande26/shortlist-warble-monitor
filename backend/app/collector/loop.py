@@ -5,7 +5,7 @@ import time
 
 from app.alerts.alerter import Alerter
 from app.client.client import WarbleClient
-from app.client.exceptions import WarbleAPIError, WarbleRateLimitError
+from app.client.exceptions import WarbleAPIError, WarbleRateLimitError, WarbleUnauthorizedError
 from app.collector import sampler
 from app.collector.budget import BudgetTracker
 from app.config import settings
@@ -38,6 +38,16 @@ HEARTBEAT_INTERVAL_S = 30 * 60
 LIVE_SAMPLE_INTERVAL_S = 15 * 60
 
 DEFAULT_RATE_LIMIT_PAUSE_S = 60.0
+
+# A 401 (bad/expired WARBLE_API_KEY) or any other non-429 API error hit
+# during startup used to propagate straight out of main() and kill the
+# process — the platform then restarted the container, which called /me
+# again and hit the same 401 immediately: a permanent restart-storm with no
+# way to self-heal even after the key was fixed, since a fixed key still
+# needed a human to notice and force a redeploy. Retrying at a slow, fixed
+# cadence instead keeps the process alive while broken and means a key
+# rotation heals the deployment on its own within one interval.
+STARTUP_ERROR_PAUSE_S = 300.0
 
 
 class CollectorState:
@@ -261,8 +271,15 @@ async def run_live_sample_loop(
 
 
 async def _startup_step(state: CollectorState, coro_factory):
-    """Retry a startup step across 429s (honoring retry_after) instead of
-    crashing the process before it's even scheduled anything."""
+    """Retry a startup step indefinitely instead of crashing the process
+    before it's even scheduled anything. 429s honor retry_after (transient,
+    expected under load). A 401 — most commonly a missing/expired
+    WARBLE_API_KEY — and any other non-429 API error get the same
+    treatment: log clearly and retry, because a process this fresh has
+    nothing scheduled yet to lose by waiting, and restarting the container
+    instead of retrying in place only turns a fixable config problem into
+    an unbounded restart-storm.
+    """
     while True:
         try:
             return await coro_factory()
@@ -270,6 +287,22 @@ async def _startup_step(state: CollectorState, coro_factory):
             pause_seconds = exc.retry_after_seconds or DEFAULT_RATE_LIMIT_PAUSE_S
             logger.warning("startup step rate limited, retrying in %.1fs", pause_seconds)
             if await state.sleep_or_stop(pause_seconds):
+                raise
+        except WarbleUnauthorizedError as exc:
+            logger.error(
+                "startup step unauthorized (401) — WARBLE_API_KEY is missing, invalid, "
+                "or expired; check the deployment's environment configuration. "
+                "Retrying in %.0fs: %s",
+                STARTUP_ERROR_PAUSE_S, exc,
+            )
+            if await state.sleep_or_stop(STARTUP_ERROR_PAUSE_S):
+                raise
+        except WarbleAPIError as exc:
+            logger.error(
+                "startup step failed (%s), retrying in %.0fs: %s",
+                type(exc).__name__, STARTUP_ERROR_PAUSE_S, exc,
+            )
+            if await state.sleep_or_stop(STARTUP_ERROR_PAUSE_S):
                 raise
 
 

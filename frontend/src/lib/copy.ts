@@ -234,6 +234,8 @@ export function monitoringStateLabel(state: MonitoringState): string {
       return "Data may be a few minutes behind";
     case "interrupted":
       return "Monitoring may be interrupted — check back soon";
+    case "complete":
+      return "Window complete";
   }
 }
 
@@ -247,6 +249,8 @@ export function monitoringStateDetail(state: MonitoringState): string {
       return "The last sampling cycle should have landed by now, but the wait isn't long enough yet to call it stopped.";
     case "interrupted":
       return "It's been long enough since the last sample that a cycle was likely missed.";
+    case "complete":
+      return "Assessment window complete — the 7-day monitoring window has ended. Everything below reflects the final state.";
   }
 }
 

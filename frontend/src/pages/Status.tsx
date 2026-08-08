@@ -14,18 +14,21 @@ const STATE_DOT_CLASS: Record<MonitoringState, string> = {
   live: "bg-monitor-live",
   delayed: "bg-monitor-delayed",
   interrupted: "bg-monitor-interrupted",
+  complete: "bg-monitor-complete",
 };
 
 const STATE_TEXT_CLASS: Record<MonitoringState, string> = {
   live: "text-monitor-live",
   delayed: "text-monitor-delayed",
   interrupted: "text-monitor-interrupted",
+  complete: "text-monitor-complete",
 };
 
 const STATE_CARD_CLASS: Record<MonitoringState, string> = {
   live: "bg-monitor-live-soft",
   delayed: "bg-monitor-delayed-soft",
   interrupted: "bg-monitor-interrupted-soft",
+  complete: "bg-monitor-complete-soft",
 };
 
 export function Status() {

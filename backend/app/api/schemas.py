@@ -218,7 +218,7 @@ class SystemStatus(BaseModel):
     # simulation clock, never wall time). ---
     last_sample_captured_at: str | None  # real ISO timestamp, max(Sample.captured_at)
     minutes_since_last_sample: float | None  # None only when no sample has ever been captured
-    monitoring_state: Literal["live", "delayed", "interrupted"]
+    monitoring_state: Literal["live", "delayed", "interrupted", "complete"]
     # Last ~10h of wall-clock sampling coverage, oldest first — for the
     # /status page's compact strip. Bucketed from the same samples already
     # loaded for this response, not a new query.

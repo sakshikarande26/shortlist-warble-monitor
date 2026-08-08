@@ -63,6 +63,13 @@
   --color-monitor-interrupted: #c94a3f;
   --color-monitor-interrupted-soft: #fbeae8;
 
+  /* Complete: the 7-day window ended on schedule — calm neutral grey, not
+     the live/delayed/interrupted traffic-light pair above, since nothing is
+     wrong. Reuses the same muted grey StatusPill.tsx already uses for its
+     neutral "Steady" pill rather than inventing a new hue. */
+  --color-monitor-complete: var(--color-ink-muted);
+  --color-monitor-complete-soft: rgb(0 0 0 / 4%);
+
   --animate-fade-in: board-fade-in 0.35s ease-out both;
 }
 

@@ -175,7 +175,7 @@ export interface AlertSummary {
   sim_hours: number;
 }
 
-export type MonitoringState = "live" | "delayed" | "interrupted";
+export type MonitoringState = "live" | "delayed" | "interrupted" | "complete";
 
 export interface SamplingCoverageTick {
   interval_start: string;

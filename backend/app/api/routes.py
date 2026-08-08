@@ -105,6 +105,15 @@ _MIN_RANKABLE_GROWTH_PCT = 0.5
 _MONITORING_LIVE_THRESHOLD_MINUTES = 20
 _MONITORING_DELAYED_THRESHOLD_MINUTES = 120
 
+# --- Sim-window completion (7-day / 168-sim-hour assessment window). Once
+# the sim clock has genuinely run its course, "how fresh is the last
+# sample" is the wrong question — the collector correctly stops updating
+# because there's nothing left to sample, not because it broke. 167 (not
+# 168) gives the final in-progress hour of legitimate live sampling room to
+# land without monitoring_state flipping depending on exactly which minute
+# /status happens to be called.
+_SIM_WINDOW_COMPLETE_THRESHOLD_HOURS = 167.0
+
 # Coverage strip: last 10h, bucketed at the collector's own live cadence (15
 # min) so a single missed cycle shows up as one faint tick, not smoothed away.
 _COVERAGE_WINDOW_HOURS = 10.0
@@ -806,10 +815,22 @@ async def get_status(session: AsyncSession = Depends(get_db)) -> SystemStatus:
         if last_sample_captured_at is not None
         else None
     )
+    last_checked_sim_hours = _current_sim_hours_from_samples(samples_by_post)
+
+    # The 7-day sim window ending is a legitimate reason samples stop
+    # arriving — not a collector failure. Skip the wall-clock freshness
+    # read entirely once the sim clock has genuinely run its course.
+    if (
+        last_checked_sim_hours is not None
+        and last_checked_sim_hours >= _SIM_WINDOW_COMPLETE_THRESHOLD_HOURS
+    ):
+        monitoring_state = "complete"
+    else:
+        monitoring_state = _monitoring_state(minutes_since_last_sample)
 
     return SystemStatus(
         posts_tracked=len(posts),
-        last_checked_sim_hours=_current_sim_hours_from_samples(samples_by_post),
+        last_checked_sim_hours=last_checked_sim_hours,
         most_notable_post=most_notable_post,
         most_recent_alert=most_recent_alert,
         alerts_sent=alerts_sent,
@@ -818,7 +839,7 @@ async def get_status(session: AsyncSession = Depends(get_db)) -> SystemStatus:
         if last_sample_captured_at is not None
         else None,
         minutes_since_last_sample=minutes_since_last_sample,
-        monitoring_state=_monitoring_state(minutes_since_last_sample),
+        monitoring_state=monitoring_state,
         sampling_coverage=_sampling_coverage_from_samples(samples_by_post),
     )
 

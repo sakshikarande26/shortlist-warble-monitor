@@ -34,7 +34,16 @@ export function WhileAwaySection({ changes, windowType }: WhileAwaySectionProps)
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
                 <span className="truncate text-sm font-medium text-ink">@{change.post.creator_handle}</span>
-                <StatusPill label={change.to_status_label} />
+                {/* The post's CURRENT canonical status, not the transition's
+                    to_status_label. A post can move Steady -> Worth watching
+                    inside the window and settle back before this renders; using
+                    the historical label put a "Worth watching" badge directly
+                    above performanceStatement()'s "No unusual movement" line —
+                    the same card asserting two different states. The arrow line
+                    below carries the history, so nothing is lost by badging the
+                    present. (copy.ts: status_label is the one canonical status,
+                    rendered verbatim everywhere.) */}
+                <StatusPill label={change.post.status_label} />
               </div>
               {change.post.caption && <p className="mt-0.5 truncate text-sm text-ink-muted">{change.post.caption}</p>}
               <p className="mt-1 text-sm text-ink">{performanceStatement(change.post)}</p>

@@ -15,12 +15,14 @@ const HEALTH_PILL_CLASS: Record<MonitoringState, string> = {
   live: "bg-monitor-live-soft text-monitor-live",
   delayed: "bg-monitor-delayed-soft text-monitor-delayed",
   interrupted: "bg-monitor-interrupted-soft text-monitor-interrupted",
+  complete: "bg-monitor-complete-soft text-monitor-complete",
 };
 
 const HEALTH_DOT_CLASS: Record<MonitoringState, string> = {
   live: "bg-monitor-live",
   delayed: "bg-monitor-delayed",
   interrupted: "bg-monitor-interrupted",
+  complete: "bg-monitor-complete",
 };
 
 // Real liveness, not a static placeholder: shares the "status" cache key
